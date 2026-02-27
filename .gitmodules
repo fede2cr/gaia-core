@@ -1,0 +1,12 @@
+[submodule "projects/RMS"]
+	path = projects/RMS
+	url = https://github.com/fede2cr/RMS.git
+	branch = container
+
+[submodule "projects/gaia-audio"]
+	path = projects/gaia-audio
+	url = https://github.com/fede2cr/gaia-audio.git
+
+[submodule "projects/gaia-radio"]
+	path = projects/gaia-radio
+	url = https://github.com/fede2cr/gaia-radio.git

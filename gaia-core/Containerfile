@@ -1,0 +1,56 @@
+# ── Stage 1: Build ────────────────────────────────────────────────────────
+FROM docker.io/library/rust:1-trixie AS builder
+
+# Install wasm target + cargo-leptos
+RUN rustup target add wasm32-unknown-unknown \
+    && cargo install cargo-leptos
+
+WORKDIR /build
+COPY . .
+
+# Build SSR binary + WASM client bundle
+RUN cargo leptos build --release
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────
+FROM docker.io/library/debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        alsa-utils \
+        avahi-daemon \
+        avahi-utils \
+        dbus \
+        podman-remote \
+        tini \
+        bash \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i 's/^rlimit-nproc=.*/#&/' /etc/avahi/avahi-daemon.conf \
+    && ln -sf /usr/bin/podman-remote /usr/local/bin/podman
+
+WORKDIR /app
+
+# Copy the server binary
+COPY --from=builder /build/target/release/gaia-core /app/gaia-core
+
+# Copy the compiled site (WASM bundle, CSS, static assets)
+COPY --from=builder /build/target/site /app/site
+
+# Copy the entrypoint script that starts dbus + avahi before the server
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Persistent data directory for assignments
+RUN mkdir -p /app/data
+
+# Leptos needs to know where the site root is at runtime
+ENV LEPTOS_SITE_ROOT=/app/site
+ENV LEPTOS_SITE_ADDR=0.0.0.0:3100
+ENV LEPTOS_OUTPUT_NAME=gaia-core
+ENV LEPTOS_SITE_PKG_DIR=pkg
+ENV GAIA_CONFIG_DIR=/app/data
+ENV CONTAINER_HOST=unix:///run/podman/podman.sock
+ENV CONTAINER_RUNTIME=podman
+
+EXPOSE 3100
+
+ENTRYPOINT ["tini", "--", "/app/entrypoint.sh"]

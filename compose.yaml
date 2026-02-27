@@ -1,0 +1,122 @@
+# Gaia Core – compose.yaml
+#
+# Runs the Gaia Core web interface.  Sub-project containers are managed
+# (started / stopped) by the dashboard — they do NOT auto-start.
+#
+# Start with:  podman-compose up -d
+# Then use the web UI at http://localhost:3100 to enable containers.
+
+services:
+  # ── Gaia Core ────────────────────────────────────────────────────────
+  # Uses host networking so avahi-browse can discover mDNS services on
+  # the physical LAN (multicast doesn't cross bridge networks).
+  gaia-core:
+    image: gaia-core
+    build:
+      context: ./gaia-core
+      dockerfile: Containerfile
+    container_name: gaia-core
+    network_mode: host
+    volumes:
+      - gaia-core-data:/app/data
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
+    environment:
+      - GAIA_AUDIO_URL=http://localhost:3000
+      - GAIA_RADIO_URL=http://localhost:8080
+      - GAIA_GMN_URL=http://localhost:8180
+      - GAIA_CONFIG_DIR=/app/data
+      - LEPTOS_SITE_ADDR=0.0.0.0:3100
+      - CONTAINER_RUNTIME=podman
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+        window: 60s
+
+  # ── Gaia Audio ───────────────────────────────────────────────────────
+  # These containers are started/stopped by gaia-core.
+  # All use host networking for mDNS multicast discovery.
+  gaia-audio-capture:
+    image: docker.io/fede2/gaia-audio-capture
+    container_name: gaia-audio-capture
+    profiles: ["managed"]
+    network_mode: host
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    volumes:
+      - gaia-audio-data:/data
+      - /proc/asound:/run/asound:ro
+    restart: unless-stopped
+
+  gaia-audio-processing:
+    image: docker.io/fede2/gaia-audio-processing
+    container_name: gaia-audio-processing
+    profiles: ["managed"]
+    network_mode: host
+    volumes:
+      - gaia-audio-data:/data
+    restart: unless-stopped
+
+  gaia-audio-web:
+    image: docker.io/fede2/gaia-audio-web
+    container_name: gaia-audio-web
+    profiles: ["managed"]
+    network_mode: host
+    environment:
+      - LEPTOS_SITE_ADDR=0.0.0.0:3000
+    volumes:
+      - gaia-audio-data:/data
+    restart: unless-stopped
+
+  # ── Gaia Radio ───────────────────────────────────────────────────────
+  gaia-radio-capture:
+    image: docker.io/fede2/gaia-radio-capture
+    container_name: gaia-radio-capture
+    profiles: ["managed"]
+    network_mode: host
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    restart: unless-stopped
+
+  gaia-radio-processing:
+    image: docker.io/fede2/gaia-radio-processing
+    container_name: gaia-radio-processing
+    profiles: ["managed"]
+    network_mode: host
+    volumes:
+      - readsb-json:/run/readsb
+    restart: unless-stopped
+
+  gaia-radio-web:
+    image: docker.io/fede2/gaia-radio-web
+    container_name: gaia-radio-web
+    profiles: ["managed"]
+    network_mode: host
+    environment:
+      - WEB_PORT=8080
+    volumes:
+      - readsb-json:/run/readsb:ro
+      - co2-state:/var/lib/co2tracker
+    restart: unless-stopped
+
+  # ── GMN / RMS ────────────────────────────────────────────────────────
+  # RMS currently has no web interface.  Uncomment when one is available.
+  # rms:
+  #   image: docker.io/fede2/rms
+  #   container_name: rms
+  #   profiles: ["managed"]
+  #   network_mode: host
+  #   devices:
+  #     - /dev/video0:/dev/video0
+  #   restart: unless-stopped
+
+volumes:
+  gaia-core-data:
+  gaia-audio-data:
+  readsb-json:
+  co2-state:

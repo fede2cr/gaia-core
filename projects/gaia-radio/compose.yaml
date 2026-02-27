@@ -1,0 +1,43 @@
+# gaia-radio compose
+#
+# All containers use host networking so mDNS (avahi) can discover and
+# announce services on the local LAN.  In production each container is
+# expected to run on separate hardware (e.g. capture on a Raspberry Pi),
+# so this compose file is mainly for development / single-host testing.
+
+services:
+  processing:
+    build:
+      context: ./processing
+      dockerfile: Containerfile
+    image: gaia-radio-processing
+    container_name: gaia-radio-processing
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - READSB_NET_BO_PORT=30005
+      - READSB_NET_RO_PORT=30002
+      - READSB_NET_SBS_PORT=30003
+      - DISCOVERY_TIMEOUT=60
+    volumes:
+      - readsb-json:/run/readsb
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Containerfile
+    image: gaia-radio-web
+    container_name: gaia-radio-web
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - processing
+    environment:
+      - WEB_PORT=8080
+    volumes:
+      - readsb-json:/run/readsb:ro
+      - co2-state:/var/lib/co2tracker
+
+volumes:
+  readsb-json:
+  co2-state:

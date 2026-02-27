@@ -1,0 +1,45 @@
+FROM debian:trixie-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+    librtlsdr-dev \
+    libncurses-dev \
+    libzstd-dev \
+    pkg-config \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/wiedehopf/readsb.git /src/readsb
+
+WORKDIR /src/readsb
+RUN make RTLSDR=yes OPTIMIZE="-O2"
+
+# --- Runtime stage ---
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    librtlsdr0 \
+    libncurses6 \
+    libzstd1 \
+    avahi-daemon \
+    avahi-utils \
+    dbus \
+    tini \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/readsb/readsb /usr/local/bin/readsb
+
+# Allow avahi to run without a chroot
+RUN sed -i 's/^rlimit-nproc=.*/#&/' /etc/avahi/avahi-daemon.conf
+
+RUN mkdir -p /run/readsb
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 30005
+
+ENTRYPOINT ["tini", "--", "/entrypoint.sh"]
