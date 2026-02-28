@@ -30,10 +30,11 @@ tower               = { version = "0.4", optional = true }
 tower-http          = { version = "0.5", features = ["fs", "cors"], optional = true }
 tracing             = { version = "0.1", optional = true }
 tracing-subscriber  = { version = "0.3", features = ["env-filter"], optional = true }
-reqwest             = { version = "0.12", features = ["json"], optional = true }
+reqwest             = { version = "0.12", features = ["json", "stream"], optional = true }
 http                = { version = "1", optional = true }
 hyper               = { version = "1", optional = true }
 hyper-util          = { version = "0.1", optional = true }
+http-body-util      = { version = "0.1", optional = true }
 mime_guess          = { version = "2", optional = true }
 rusqlite            = { version = "0.31", features = ["bundled"], optional = true }
 
@@ -65,6 +66,7 @@ ssr = [
     "dep:http",
     "dep:hyper",
     "dep:hyper-util",
+    "dep:http-body-util",
     "dep:mime_guess",
     "dep:rusqlite",
 ]

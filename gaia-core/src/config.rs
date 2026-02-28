@@ -21,12 +21,16 @@ pub struct ProjectTarget {
     pub processing_enabled: bool,
     /// Whether the web interface container is enabled.
     pub web_enabled: bool,
+    /// Whether the config container is enabled (e.g. GMN camera pre-align).
+    pub config_enabled: bool,
+    /// TCP port for the config service (0 = none).
+    pub config_port: u16,
 }
 
 impl ProjectTarget {
     /// Returns `true` if any container in this project is enabled.
     pub fn any_enabled(&self) -> bool {
-        self.capture_enabled || self.processing_enabled || self.web_enabled
+        self.capture_enabled || self.processing_enabled || self.web_enabled || self.config_enabled
     }
 }
 
@@ -47,6 +51,8 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,
+            config_enabled: false,
+            config_port: 0,
         },
         ProjectTarget {
             name: "Gaia Radio".into(),
@@ -60,6 +66,8 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,
+            config_enabled: false,
+            config_port: 0,
         },
         ProjectTarget {
             name: "Global Meteor Network".into(),
@@ -71,7 +79,9 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             port: 8180,
             capture_enabled: false,
             processing_enabled: false,
-            web_enabled: false, // RMS has no web UI yet
+            web_enabled: false,
+            config_enabled: false,
+            config_port: 8181,
         },
     ]
 }

@@ -5,7 +5,9 @@ use leptos_meta::*;
 use leptos_router::*;
 
 use crate::components::nav::Nav;
-use crate::pages::{home::Home, projects::ProjectsPage, settings::SettingsPage};
+use crate::pages::{
+    gmn_config::GmnConfigPage, home::Home, projects::ProjectsPage, settings::SettingsPage,
+};
 
 /// The root `<App/>` component.
 #[component]
@@ -24,6 +26,7 @@ pub fn App() -> impl IntoView {
                 <Routes>
                     <Route path="/" view=Home/>
                     <Route path="/projects" view=ProjectsPage/>
+                    <Route path="/gmn-config" view=GmnConfigPage/>
                     <Route path="/settings" view=SettingsPage/>
                 </Routes>
             </main>

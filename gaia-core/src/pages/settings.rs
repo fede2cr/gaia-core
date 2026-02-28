@@ -55,6 +55,7 @@ pub fn SettingsPage() -> impl IntoView {
                                         ("C", t.capture_enabled),
                                         ("P", t.processing_enabled),
                                         ("W", t.web_enabled),
+                                        ("Cfg", t.config_enabled),
                                     ];
                                     view! {
                                         <tr>

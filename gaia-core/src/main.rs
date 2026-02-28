@@ -6,7 +6,7 @@ async fn main() {
     use axum::{
         extract::State,
         response::{IntoResponse, Response},
-        routing::get,
+        routing::{any, get},
         Router,
     };
     use leptos::*;
@@ -47,6 +47,7 @@ async fn main() {
                     "capture" => t.capture_enabled = enabled,
                     "processing" => t.processing_enabled = enabled,
                     "web" => t.web_enabled = enabled,
+                    "config" => t.config_enabled = enabled,
                     _ => {}
                 }
             }
@@ -55,16 +56,13 @@ async fn main() {
     let proxy_state = ProxyState::from_targets(&targets);
 
     for t in &targets {
-        if t.web_enabled {
-            tracing::info!(
-                "Proxy: /proxy/{} → {} (port {})",
-                t.slug,
-                t.upstream_url,
-                t.port
-            );
-        } else {
-            tracing::info!("Skipping project with web disabled: {} ({})", t.name, t.slug);
-        }
+        tracing::info!(
+            "Proxy: /proxy/{} → {} (port {}) [web={}]",
+            t.slug,
+            t.upstream_url,
+            t.port,
+            if t.web_enabled { "on" } else { "off" },
+        );
     }
 
     // ── Leptos routes ────────────────────────────────────────────────────
@@ -74,11 +72,12 @@ async fn main() {
     // .with_state() here converts Router<ProxyState> → Router<()> so it
     // can be nested inside the main router that carries LeptosOptions.
     let proxy_router = Router::new()
-        .route("/:slug/*rest", get(proxy::proxy_handler))
-        .route("/:slug", get(proxy::proxy_root_handler))
+        .route("/*path", any(proxy::proxy_handler))
         .with_state(proxy_state);
 
     let app = Router::new()
+        // Camera-stream MJPEG proxy (must be before Leptos catch-all).
+        .route("/api/camera-stream", get(proxy::camera_stream_handler))
         // Reverse-proxy sub-router — mounted before the Leptos catch-all.
         .nest("/proxy", proxy_router)
         // Leptos SSR routes.

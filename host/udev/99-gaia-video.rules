@@ -1,0 +1,13 @@
+# Gaia – allow rootless containers to access V4L2 camera devices.
+#
+# Rootless Podman cannot pass /dev/video* into containers because the
+# kernel cgroup device controller blocks access to character device
+# major 81 regardless of UID/GID mapping.  Making the device nodes
+# world-accessible (mode 0666) is the simplest reliable workaround.
+#
+# Install:
+#   sudo cp 99-gaia-video.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+KERNEL=="video[0-9]*", MODE="0666"

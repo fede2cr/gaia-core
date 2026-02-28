@@ -31,3 +31,25 @@ This project uses an SDR to listen to ADS-B and other sources of aircraft teleme
 So far this project is using the correct implementation to have multiple nodes detecting each other over mDNS, so the other projects should copy this approach and use it as a base for their own implementations.
 
 These are the containers for the project. https://hub.docker.com/r/fede2/gaia-radio-processing https://hub.docker.com/r/fede2/gaia-radio-web https://hub.docker.com/r/fede2/gaia-radio-capture and this the sources in GitHub https://github.com/fede2cr/gaia-radio
+
+## Host Setup
+
+Some features require one-time host-level configuration that cannot be applied from inside a rootless container. A setup script is provided:
+
+```bash
+sudo bash setup-host.sh
+```
+
+### Camera access (V4L2)
+
+The GMN camera pre-alignment feature needs access to `/dev/video*` devices from inside a rootless Podman container. By default the kernel's cgroup device controller blocks access to V4L2 devices (character major 81) regardless of UID/GID mapping or `--privileged` flags.
+
+The host setup script installs a udev rule (`host/udev/99-gaia-video.rules`) that sets video device nodes to mode `0666`, allowing the container to open them. You can also install it manually:
+
+```bash
+sudo cp host/udev/99-gaia-video.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Verify with `ls -l /dev/video0` — permissions should show `crw-rw-rw-`.

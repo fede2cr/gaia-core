@@ -29,6 +29,7 @@ pub fn ProjectCard(
     let (web, set_web) = create_signal(initial_web);
 
     let slug_for_link = slug.clone();
+    let slug_for_config = slug.clone();
 
     // Helper: create a toggle action for a given container kind.
     let make_action = {
@@ -91,16 +92,21 @@ pub fn ProjectCard(
 
             <div class="project-card-footer">
                 <span class="project-port">"Port: " {port}</span>
-                <Show
-                    when=move || web.get()
-                    fallback=|| view! {
-                        <span class="project-link-disabled">"Web disabled"</span>
-                    }
-                >
-                    <a href={proxy_href.clone()} class="project-link" target="_blank">
-                        "Open Interface →"
-                    </a>
-                </Show>
+                <div class="project-card-actions">
+                    {(slug_for_config == "gmn").then(|| view! {
+                        <a href="/gmn-config" class="btn btn-secondary btn-sm">"⚙ Config"</a>
+                    })}
+                    <Show
+                        when=move || web.get()
+                        fallback=|| view! {
+                            <span class="project-link-disabled">"Web disabled"</span>
+                        }
+                    >
+                        <a href={proxy_href.clone()} class="project-link" target="_blank">
+                            "Open Interface →"
+                        </a>
+                    </Show>
+                </div>
             </div>
         </div>
     }

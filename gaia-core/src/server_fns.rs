@@ -104,6 +104,7 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
                 "capture" => t.capture_enabled = enabled,
                 "processing" => t.processing_enabled = enabled,
                 "web" => t.web_enabled = enabled,
+                "config" => t.config_enabled = enabled,
                 _ => {}
             }
         }
@@ -225,6 +226,10 @@ pub struct GmnConfig {
     pub camera_device: Option<String>,
     /// Human-readable camera label, if available.
     pub camera_label: Option<String>,
+    /// Whether the config container (camera stream) is running.
+    pub config_enabled: bool,
+    /// Port the config (camera stream) container listens on.
+    pub config_port: u16,
 }
 
 /// Load the current GMN configuration (callsign + assigned camera).
@@ -256,6 +261,11 @@ pub async fn get_gmn_config() -> Result<GmnConfig, ServerFnError> {
         callsign,
         camera_device: camera.map(|c| c.device_id.clone()),
         camera_label,
+        config_enabled: crate::db::get_container_enabled("gmn", "config")
+            .await
+            .unwrap_or(None)
+            .unwrap_or(false),
+        config_port: 8181,
     })
 }
 

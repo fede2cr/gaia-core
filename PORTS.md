@@ -17,6 +17,7 @@ conflicts when running multiple projects on the same host.
 | 30005 | TCP (Beast) | Gaia Radio    | `gaia-radio-capture`     | Beast binary output (capture → processing)         |
 | 30005 | TCP (Beast) | Gaia Radio    | `gaia-radio-processing`  | Beast binary output (processing → consumers)       |
 | 554   | RTSP        | GMN (RMS)     | `rms`                    | IP camera video stream                             |
+| 8181  | HTTP        | GMN (RMS)     | `gaia-gmn-config`        | Camera pre-alignment MJPEG stream                  |
 
 ## Reserved Ranges
 

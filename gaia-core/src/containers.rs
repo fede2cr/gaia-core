@@ -72,6 +72,7 @@ struct ContainerSpec {
     volumes: &'static [&'static str],     // "name:/path" or "host:container:opts"
     group_add: &'static [&'static str],   // supplementary groups
     privileged: bool,                     // --privileged
+    extra_args: &'static [&'static str],  // additional `podman run` flags
     restart: &'static str,                // restart policy
     // All containers use --network host for mDNS multicast.
 }
@@ -94,6 +95,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             ],
             group_add: &["audio"],
             privileged: false,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         "gaia-audio-processing" => Some(ContainerSpec {
@@ -103,6 +105,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             volumes: &["gaia-audio-data:/data"],
             group_add: &[],
             privileged: false,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         "gaia-audio-web" => Some(ContainerSpec {
@@ -112,6 +115,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             volumes: &["gaia-audio-data:/data"],
             group_add: &[],
             privileged: false,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         // ── Gaia Radio ───────────────────────────────────
@@ -122,6 +126,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             volumes: &[],
             group_add: &[],
             privileged: true,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         "gaia-radio-processing" => Some(ContainerSpec {
@@ -131,6 +136,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             volumes: &["readsb-json:/run/readsb"],
             group_add: &[],
             privileged: false,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         "gaia-radio-web" => Some(ContainerSpec {
@@ -143,6 +149,21 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             ],
             group_add: &[],
             privileged: false,
+            extra_args: &[],
+            restart: "unless-stopped",
+        }),
+        // ── GMN / RMS ────────────────────────────────────
+        // Camera access in rootless podman requires a host udev rule
+        // that sets MODE="0666" on video devices (see DEVELOPER.md).
+        // We bind-mount the device node so the container can open it.
+        "gaia-gmn-config" => Some(ContainerSpec {
+            image: "gaia-gmn-config",
+            env: &["VIDEO_DEVICE=/dev/video0", "STREAM_PORT=8181"],
+            devices: &[],
+            volumes: &["/dev/video0:/dev/video0"],
+            group_add: &[],
+            privileged: false,
+            extra_args: &[],
             restart: "unless-stopped",
         }),
         _ => None,
@@ -260,6 +281,11 @@ pub async fn start(name: &str) -> Result<(), String> {
     for g in spec.group_add {
         args.push("--group-add".into());
         args.push((*g).into());
+    }
+
+    // Extra arguments (e.g. --userns=keep-id)
+    for a in spec.extra_args {
+        args.push((*a).into());
     }
 
     // Image (must be last)

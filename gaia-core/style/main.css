@@ -702,3 +702,137 @@ code {
     color: var(--color-danger);
     padding: 1rem 0;
 }
+
+/* ─── GMN Config Page ──────────────────────────────────────────────────── */
+
+.gmn-config-page {
+    max-width: 800px;
+}
+
+.gmn-config-page h1 {
+    font-size: 1.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.back-link {
+    display: inline-block;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+}
+
+.back-link:hover {
+    color: var(--color-primary);
+}
+
+.config-section {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.config-section h2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.25rem;
+}
+
+.section-description {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+/* ─── Callsign Form ────────────────────────────────────────────────────── */
+
+.callsign-form {
+    margin-top: 0.5rem;
+}
+
+.callsign-fields {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.field-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.field-input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.95rem;
+    width: 12rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    letter-spacing: 0.05em;
+    transition: border-color 0.15s;
+}
+
+.field-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+/* ─── Camera Pre-align ─────────────────────────────────────────────────── */
+
+.camera-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.camera-device-label {
+    font-size: 0.85rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    color: var(--color-text-muted);
+}
+
+.camera-stream-container {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #000;
+    line-height: 0;
+}
+
+.camera-stream {
+    width: 100%;
+    max-width: 640px;
+    height: auto;
+    display: block;
+}
+
+.camera-stream-hint {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    padding: 0.75rem 1rem;
+    margin: 0;
+}
+
+/* ─── Small button variant ─────────────────────────────────────────────── */
+
+.btn-sm {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+/* ─── Project card actions row ─────────────────────────────────────────── */
+
+.project-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}

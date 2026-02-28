@@ -1,0 +1,30 @@
+# gaia-gmn-config
+#
+# Lightweight MJPEG camera streaming container for GMN camera
+# pre-alignment.  Reads from a V4L2 device and serves an MJPEG
+# stream over HTTP.
+#
+# Environment variables:
+#   VIDEO_DEVICE  — V4L2 device path (default: /dev/video0)
+#   STREAM_PORT   — HTTP port to listen on (default: 8181)
+#   RESOLUTION    — Video resolution (default: 640x480)
+#   FRAMERATE     — Capture frame rate (default: 10)
+
+FROM docker.io/library/python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        v4l-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY stream_server.py /app/stream_server.py
+
+WORKDIR /app
+ENV VIDEO_DEVICE=/dev/video0
+ENV STREAM_PORT=8181
+ENV RESOLUTION=640x480
+ENV FRAMERATE=10
+
+EXPOSE 8181
+
+CMD ["python3", "/app/stream_server.py"]
