@@ -17,7 +17,7 @@ pub fn DeviceList() -> impl IntoView {
             <p class="panel-subtitle">
                 "Detected capture devices on this host. Assign each device to a project."
             </p>
-            <Suspense fallback=move || view! { <p class="loading">"Scanning devices…"</p> }>
+            <Suspense fallback=move || view! { <p class="loading">"Scanning devices..."</p> }>
                 {move || {
                     let devs = devices.get();
                     let asns = assignments.get();
@@ -45,7 +45,7 @@ pub fn DeviceList() -> impl IntoView {
                             <p class="error-state">"Error loading assignments: " {e.to_string()}</p>
                         }.into_view(),
                         _ => view! {
-                            <p class="loading">"Loading…"</p>
+                            <p class="loading">"Loading..."</p>
                         }.into_view(),
                     }
                 }}
@@ -118,7 +118,7 @@ fn DeviceRow(
                     assign_action.dispatch((device_id.clone(), val));
                 }
             >
-                <option value="none" selected=move || selected.get().is_empty()>"— Unassigned —"</option>
+                <option value="none" selected=move || selected.get().is_empty()>"Unassigned"</option>
                 <option value="audio" selected=move || selected.get() == "audio">"Gaia Audio"</option>
                 <option value="radio" selected=move || selected.get() == "radio">"Gaia Radio"</option>
                 <option value="gmn" selected=move || selected.get() == "gmn">"GMN (Meteor)"</option>

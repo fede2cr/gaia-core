@@ -52,4 +52,4 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-Verify with `ls -l /dev/video0` — permissions should show `crw-rw-rw-`.
+Verify with `ls -l /dev/video0`, permissions should show `crw-rw-rw-`.

@@ -1,4 +1,4 @@
-//! GMN configuration page — callsign + camera pre-alignment live stream.
+//! GMN configuration page for callsign and camera pre-alignment live stream.
 
 use leptos::*;
 
@@ -14,9 +14,9 @@ pub fn GmnConfigPage() -> impl IntoView {
     view! {
         <section class="gmn-config-page">
             <a href="/" class="back-link">"← Back to Dashboard"</a>
-            <h1>"Global Meteor Network — Configuration"</h1>
+            <h1>"Global Meteor Network - Configuration"</h1>
 
-            <Suspense fallback=move || view! { <p class="loading">"Loading configuration…"</p> }>
+            <Suspense fallback=move || view! { <p class="loading">"Loading configuration..."</p> }>
                 {move || {
                     config.get().map(|result| match result {
                         Ok(cfg) => {
@@ -127,7 +127,7 @@ fn CameraPreview(
         toggle_action.dispatch(new_state);
     };
 
-    // Reactive stream URL — includes an epoch cache-buster so the browser
+    // Reactive stream URL with an epoch cache-buster so the browser
     // re-fetches after each toggle.
     let stream_src = move || {
         let epoch = stream_epoch.get();
@@ -144,9 +144,9 @@ fn CameraPreview(
                 {move || {
                     if loading.get() {
                         if streaming.get() {
-                            "Stopping…".to_string()
+                            "Stopping...".to_string()
                         } else {
-                            "Starting…".to_string()
+                            "Starting...".to_string()
                         }
                     } else if streaming.get() {
                         "⏹ Stop Preview".to_string()
@@ -228,7 +228,7 @@ fn CallsignForm(
                     class="location-save-btn"
                     disabled=move || save_action.pending().get()
                 >
-                    {move || if save_action.pending().get() { "Saving…" } else { "Save" }}
+                    {move || if save_action.pending().get() { "Saving..." } else { "Save" }}
                 </button>
             </div>
             {move || {

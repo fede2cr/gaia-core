@@ -1,4 +1,4 @@
-//! Home / dashboard page — overview of all running Gaia projects.
+//! Home / dashboard page showing all running Gaia projects.
 
 use leptos::*;
 
@@ -23,7 +23,7 @@ pub fn Home() -> impl IntoView {
 
             // ── Applications (with on/off toggles) ──────────────────
             <h2 class="section-heading">"Applications"</h2>
-            <Suspense fallback=move || view! { <p class="loading">"Loading projects…"</p> }>
+            <Suspense fallback=move || view! { <p class="loading">"Loading projects..."</p> }>
                 {move || {
                     targets.get().map(|result| match result {
                         Ok(ts) => view! {

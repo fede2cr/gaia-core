@@ -58,17 +58,48 @@ frame_buf = FrameBuffer()
 
 # ── ffmpeg capture thread ────────────────────────────────────────────────
 
+def probe_native_mjpeg(device: str) -> bool:
+    """Check if the V4L2 device natively supports MJPEG output.
+
+    Uses v4l2-ctl to list supported pixel formats.  If MJPEG (or MJPG)
+    is among them, we can tell ffmpeg to request it directly instead of
+    having it transcode from raw YUYV/NV12, which avoids white-screen
+    issues on many USB cameras (e.g. Arducam on Raspberry Pi).
+    """
+    try:
+        result = subprocess.run(
+            ["v4l2-ctl", "--device", device, "--list-formats"],
+            capture_output=True, text=True, timeout=5,
+        )
+        output = result.stdout.upper()
+        return "MJPG" in output or "MJPEG" in output
+    except Exception as e:
+        print(f"[gaia-gmn-config] v4l2-ctl probe failed: {e}", flush=True)
+        return False
+
+
 def capture_thread():
     """Launch ffmpeg, read JPEG frames from pipe, update the shared buffer."""
     width, height = RESOLUTION.split("x")
 
+    native_mjpeg = probe_native_mjpeg(VIDEO_DEVICE)
+    if native_mjpeg:
+        print(f"[gaia-gmn-config] Camera supports native MJPEG, using -input_format mjpeg",
+              flush=True)
+
     cmd = [
         "ffmpeg",
         "-f", "v4l2",
+    ]
+    # If the camera natively supports MJPEG, request it directly.
+    # This avoids transcoding and prevents white-screen issues.
+    if native_mjpeg:
+        cmd += ["-input_format", "mjpeg"]
+    cmd += [
         "-video_size", RESOLUTION,
         "-framerate", FRAMERATE,
         "-i", VIDEO_DEVICE,
-        # Output individual JPEG images separated by a marker
+        # Output JPEG frames to pipe
         "-f", "image2pipe",
         "-vcodec", "mjpeg",
         "-q:v", "5",
@@ -114,7 +145,7 @@ def capture_thread():
 
                 eoi = buf.find(EOI, soi + 2)
                 if eoi == -1:
-                    # Incomplete frame — trim everything before SOI and wait.
+                    # Incomplete frame, trim everything before SOI and wait.
                     buf = buf[soi:]
                     break
 
@@ -205,7 +236,7 @@ class StreamHandler(BaseHTTPRequestHandler):
                     # Wait briefly for a new frame to avoid busy-looping.
                     frame_buf.wait(timeout=0.5)
         except (BrokenPipeError, ConnectionResetError):
-            pass  # Client disconnected — normal.
+            pass  # Client disconnected, normal.
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
@@ -231,7 +262,7 @@ def main():
 
     # Graceful shutdown on SIGTERM.
     def shutdown(sig, frame):
-        print("[gaia-gmn-config] Shutting down…", flush=True)
+        print("[gaia-gmn-config] Shutting down...", flush=True)
         server.shutdown()
         sys.exit(0)
 

@@ -53,7 +53,7 @@ pub async fn detect_sdr() -> Vec<HwDevice> {
     for line in stderr.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("Found ") {
-            // "Found 1 device(s):" — skip header
+            // "Found 1 device(s):" header line, skip it
             if rest.contains("device") {
                 continue;
             }
@@ -247,10 +247,15 @@ async fn detect_microphones_arecord() -> Vec<HwDevice> {
     devices
 }
 
-// ── Video capture devices ────────────────────────────────────────────────
+// -- Video capture devices ────────────────────────────────────────────────
 
 /// Detect V4L2 video capture devices by scanning `/dev/video*` and
 /// reading the device name from `/sys/class/video4linux/*/name`.
+///
+/// Filters out metadata-only nodes by checking the `index` sysfs attribute.
+/// USB cameras often create multiple /dev/video* nodes (e.g. video0 for
+/// capture, video1 for metadata).  Only index 0 nodes are actual capture
+/// devices.
 pub async fn detect_cameras() -> Vec<HwDevice> {
     let mut devices = Vec::new();
 
@@ -265,6 +270,17 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
         let dev_name = fname.to_string_lossy().to_string();
         if !dev_name.starts_with("video") {
             continue;
+        }
+
+        // Filter out metadata-only nodes.
+        // The sysfs `index` file contains the sub-device index.  Index 0
+        // means the primary video capture node; higher indices are
+        // typically metadata or output nodes.
+        let index_path = entry.path().join("index");
+        if let Ok(idx) = tokio::fs::read_to_string(&index_path).await {
+            if idx.trim() != "0" {
+                continue;
+            }
         }
 
         let name_path = entry.path().join("name");

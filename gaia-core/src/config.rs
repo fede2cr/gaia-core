@@ -43,7 +43,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
         ProjectTarget {
             name: "Gaia Audio".into(),
             slug: "audio".into(),
-            description: "Bioacoustic species monitoring — bird songs, insects, bats and more."
+            description: "Bioacoustic species monitoring: bird songs, insects, bats and more."
                 .into(),
             upstream_url: std::env::var("GAIA_AUDIO_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
@@ -73,7 +73,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             name: "Global Meteor Network".into(),
             slug: "gmn".into(),
             description:
-                "Meteor detection using video cameras — capture and processing via RMS.".into(),
+                "Meteor detection using video cameras, capture and processing via RMS.".into(),
             upstream_url: std::env::var("GAIA_GMN_URL")
                 .unwrap_or_else(|_| "http://localhost:8180".into()),
             port: 8180,

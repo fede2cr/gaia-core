@@ -1,9 +1,9 @@
-//! Container lifecycle control — start / stop Podman or Docker containers.
+//! Container lifecycle control: start / stop Podman or Docker containers.
 //!
 //! Gaia-core runs inside a container with the host's Podman (or Docker)
 //! socket mounted at `/run/podman/podman.sock` (or `/var/run/docker.sock`).
 //! We shell out to the CLI (`podman` or `docker`) so there is no extra Rust
-//! dependency – the binary is already installed in the runtime image.
+//! dependency, the binary is already installed in the runtime image.
 //!
 //! On **start** the flow is: pull image → remove stale container → run.
 //! This guarantees the latest image is always used and avoids the
@@ -154,13 +154,14 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
         }),
         // ── GMN / RMS ────────────────────────────────────
         // Camera access in rootless podman requires a host udev rule
-        // that sets MODE="0666" on video devices (see DEVELOPER.md).
-        // We bind-mount the device node so the container can open it.
+        // that sets MODE="0666" on video devices (see setup-host.sh).
+        // The actual device path and volume mounts are resolved
+        // dynamically in `start()` using `build_gmn_config_args()`.
         "gaia-gmn-config" => Some(ContainerSpec {
             image: "gaia-gmn-config",
-            env: &["VIDEO_DEVICE=/dev/video0", "STREAM_PORT=8181"],
+            env: &["STREAM_PORT=8181"],
             devices: &[],
-            volumes: &["/dev/video0:/dev/video0"],
+            volumes: &[],
             group_add: &[],
             privileged: false,
             extra_args: &[],
@@ -218,7 +219,7 @@ async fn remove(cmd: &str, name: &str) {
             tracing::debug!("Removed old container '{name}'");
         }
         _ => {
-            // Likely "no such container" — that's fine.
+            // Likely "no such container", that's fine.
             tracing::debug!("No existing container '{name}' to remove");
         }
     }
@@ -240,7 +241,7 @@ pub async fn start(name: &str) -> Result<(), String> {
     // 2. Remove any stale container with the same name.
     remove(cmd, name).await;
 
-    // 3. Build the `run` command — all containers use host networking.
+    // 3. Build the `run` command; all containers use host networking.
     let mut args: Vec<String> = vec![
         "run".into(),
         "-d".into(),
@@ -288,6 +289,11 @@ pub async fn start(name: &str) -> Result<(), String> {
         args.push((*a).into());
     }
 
+    // Dynamic args for containers that need runtime information.
+    if name == "gaia-gmn-config" {
+        build_gmn_config_args(&mut args).await;
+    }
+
     // Image (must be last)
     args.push(spec.image.into());
 
@@ -307,6 +313,55 @@ pub async fn start(name: &str) -> Result<(), String> {
         let msg = format!("{cmd} run {name} failed: {stderr}");
         tracing::error!("{msg}");
         Err(msg)
+    }
+}
+
+/// Build dynamic container arguments for the gaia-gmn-config container.
+///
+/// 1. Reads the camera device assigned to GMN from the database
+///    (falls back to `/dev/video0`).
+/// 2. Bind-mounts every `/dev/video*` node found on the host so the user
+///    can switch devices without restarting the container.
+/// 3. Sets the `VIDEO_DEVICE` environment variable.
+async fn build_gmn_config_args(args: &mut Vec<String>) {
+    // Resolve the assigned camera device from the DB.
+    let video_device = match crate::db::get_all_assignments().await {
+        Ok(assignments) => assignments
+            .iter()
+            .find(|a| a.project == "gmn")
+            .map(|a| a.device_id.clone())
+            .unwrap_or_else(|| "/dev/video0".into()),
+        Err(_) => "/dev/video0".into(),
+    };
+
+    tracing::info!("gaia-gmn-config: using camera device {video_device}");
+    args.push("-e".into());
+    args.push(format!("VIDEO_DEVICE={video_device}"));
+
+    // Discover and bind-mount all /dev/video* nodes from the host.
+    let mut mounted = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir("/dev").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("video") {
+                let path = format!("/dev/{name_str}");
+                args.push("-v".into());
+                args.push(format!("{path}:{path}"));
+                mounted.push(path);
+            }
+        }
+    }
+
+    if mounted.is_empty() {
+        // No video devices found; mount the assigned device path anyway
+        // so the error message inside the container makes sense.
+        args.push("-v".into());
+        args.push(format!("{video_device}:{video_device}"));
+        tracing::warn!("No /dev/video* devices found on host");
+    } else {
+        mounted.sort();
+        tracing::info!("gaia-gmn-config: mounted devices {:?}", mounted);
     }
 }
 

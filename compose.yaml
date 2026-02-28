@@ -1,7 +1,7 @@
-# Gaia Core – compose.yaml
+# Gaia Core - compose.yaml
 #
 # Runs the Gaia Core web interface.  Sub-project containers are managed
-# (started / stopped) by the dashboard — they do NOT auto-start.
+# (started / stopped) by the dashboard; they do NOT auto-start.
 #
 # Start with:  podman-compose up -d
 # Then use the web UI at http://localhost:3100 to enable containers.

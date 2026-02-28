@@ -1,4 +1,4 @@
-//! Leptos server functions — called from UI components, executed on the server.
+//! Leptos server functions called from UI components, executed on the server.
 
 use leptos::*;
 use serde::{Deserialize, Serialize};
@@ -77,7 +77,7 @@ pub async fn toggle_container(
             .await
             .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
     } else {
-        // Best-effort stop — don't fail the toggle if the container is
+        // Best-effort stop: don't fail the toggle if the container is
         // already stopped or doesn't exist yet.
         let _ = crate::containers::stop(&name).await;
     }

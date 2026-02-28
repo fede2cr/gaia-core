@@ -19,7 +19,7 @@ pub fn MdnsPanel() -> impl IntoView {
                 "Other Gaia nodes discovered on the local network via mDNS. "
                 "Assign each node to use it as a remote capture source."
             </p>
-            <Suspense fallback=move || view! { <p class="loading">"Scanning network…"</p> }>
+            <Suspense fallback=move || view! { <p class="loading">"Scanning network..."</p> }>
                 {move || {
                     let ns = nodes.get();
                     let asns = assignments.get();
@@ -47,7 +47,7 @@ pub fn MdnsPanel() -> impl IntoView {
                             <p class="error-state">"Error loading assignments: " {e.to_string()}</p>
                         }.into_view(),
                         _ => view! {
-                            <p class="loading">"Loading…"</p>
+                            <p class="loading">"Loading..."</p>
                         }.into_view(),
                     }
                 }}
@@ -114,7 +114,7 @@ fn NodeRow(
                     assign_action.dispatch((instance.clone(), val));
                 }
             >
-                <option value="none" selected=move || selected.get().is_empty()>"— Unassigned —"</option>
+                <option value="none" selected=move || selected.get().is_empty()>"Unassigned"</option>
                 <option value="audio" selected=move || selected.get() == "audio">"Gaia Audio"</option>
                 <option value="radio" selected=move || selected.get() == "radio">"Gaia Radio"</option>
                 <option value="gmn" selected=move || selected.get() == "gmn">"GMN (Meteor)"</option>

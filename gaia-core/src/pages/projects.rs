@@ -1,4 +1,4 @@
-//! Projects page — detailed view of each sub-project with embedded iframe.
+//! Projects page with detailed view of each sub-project in an embedded iframe.
 
 use leptos::*;
 
@@ -17,7 +17,7 @@ pub fn ProjectsPage() -> impl IntoView {
                 "Click the tabs below to switch between projects."
             </p>
 
-            <Suspense fallback=move || view! { <p class="loading">"Loading projects…"</p> }>
+            <Suspense fallback=move || view! { <p class="loading">"Loading projects..."</p> }>
                 {move || {
                     targets.get().map(|result| match result {
                         Ok(ts) => {

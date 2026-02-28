@@ -16,9 +16,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/gaia-core.css"/>
-        <Title text="Gaia — Central Dashboard"/>
+        <Title text="Gaia - Central Dashboard"/>
         <Meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <Meta name="description" content="Gaia central dashboard — manage and monitor all Gaia sub-projects"/>
+        <Meta name="description" content="Gaia central dashboard for managing and monitoring all Gaia sub-projects"/>
 
         <Router>
             <Nav/>

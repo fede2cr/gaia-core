@@ -1,10 +1,10 @@
-//! Reverse-proxy middleware — forwards `/proxy/{slug}/**` to the upstream service.
+//! Reverse-proxy middleware that forwards `/proxy/{slug}/**` to the upstream service.
 //!
 //! Each sub-project's web interface is accessible through the Gaia Core
 //! dashboard without needing to remember individual ports.
 //!
 //! **HTML rewriting**: When the upstream returns `text/html`, absolute paths
-//! like `/pkg/…` and `/api/…` are rewritten to `/proxy/{slug}/pkg/…` so
+//! like `/pkg/...` and `/api/...` are rewritten to `/proxy/{slug}/pkg/...` so
 //! assets and server-function calls route through the proxy.  A small
 //! `<script>` is injected to intercept `fetch()` from the WASM bundle.
 
@@ -26,7 +26,7 @@ pub struct ProxyState {
     pub client: Client,
     /// slug → upstream base URL mapping (always contains **all** projects so
     /// the proxy works immediately when a web container is enabled at
-    /// runtime – without restarting gaia-core).
+    /// runtime, without restarting gaia-core).
     pub upstreams: HashMap<String, String>,
 }
 
@@ -62,7 +62,7 @@ pub async fn proxy_handler(
     // path arrives as e.g. "radio", "radio/", "radio/pkg/app.js"
     let trimmed = path.trim_start_matches('/');
     let (slug, rest) = match trimmed.find('/') {
-        Some(idx) => (&trimmed[..idx], &trimmed[idx..]),  // slug, /rest…
+        Some(idx) => (&trimmed[..idx], &trimmed[idx..]),  // slug, /rest...
         None => (trimmed, "/"),                            // slug only → root
     };
 
@@ -161,7 +161,7 @@ pub async fn proxy_handler(
             .replace("=\"/style/", &format!("=\"{prefix}/style/"));
 
         // Inject a fetch interceptor so WASM server-function calls
-        // (POST /api/…) are routed through the proxy prefix.
+        // (POST /api/...) are routed through the proxy prefix.
         let interceptor = format!(
             "<script>(function(){{var p='{prefix}';\
              var F=window.fetch;\
@@ -200,7 +200,7 @@ pub async fn camera_stream_handler() -> Response {
 
     let upstream_url = "http://127.0.0.1:8181/stream";
 
-    // Retry up to 8 times (~4 s total) — gives the container time to boot.
+    // Retry up to 8 times (~4 s total) to give the container time to boot.
     let mut last_err = String::new();
     for attempt in 0..8u32 {
         if attempt > 0 {

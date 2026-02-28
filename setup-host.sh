@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Gaia – Host setup script
+# Gaia - Host setup script
 #
 # Applies host-level configuration required by Gaia containers that cannot
 # be done from inside a rootless container.  Run once on each host that will

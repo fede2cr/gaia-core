@@ -6,7 +6,7 @@ use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::server_fns::{get_location, get_projects, set_location};
 
-/// Settings page — shows current proxy configuration, port assignments,
+/// Settings page showing current proxy configuration, port assignments,
 /// detected hardware and remote nodes.
 #[component]
 pub fn SettingsPage() -> impl IntoView {
@@ -40,7 +40,7 @@ pub fn SettingsPage() -> impl IntoView {
                         <td><span class="status-badge status-active">"Active"</span></td>
                     </tr>
                     <Suspense fallback=move || view! {
-                        <tr><td colspan="5">"Loading…"</td></tr>
+                        <tr><td colspan="5">"Loading..."</td></tr>
                     }>
                         {move || {
                             targets.get().map(|result| match result {
@@ -176,7 +176,7 @@ fn LocationForm() -> impl IntoView {
     };
 
     view! {
-        <Suspense fallback=move || view! { <p>"Loading…"</p> }>
+        <Suspense fallback=move || view! { <p>"Loading..."</p> }>
             <form class="location-form" on:submit=on_submit>
                 <div class="location-fields">
                     <label class="location-label">
@@ -202,7 +202,7 @@ fn LocationForm() -> impl IntoView {
                     <button type="submit" class="location-save-btn"
                         disabled=move || save_action.pending().get()
                     >
-                        {move || if save_action.pending().get() { "Saving…" } else { "Save" }}
+                        {move || if save_action.pending().get() { "Saving..." } else { "Save" }}
                     </button>
                 </div>
                 {move || status_msg.get().map(|msg| {

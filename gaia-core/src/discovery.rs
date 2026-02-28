@@ -67,7 +67,7 @@ const INSTANCE_PREFIXES: &[(&str, &str)] = &[
 ];
 
 /// Maximum time to wait for `avahi-browse -t` to complete its scan.
-/// This is a safety net — with `-t` the process usually finishes in a
+/// This is a safety net; with `-t` the process usually finishes in a
 /// few seconds.  We set it generously for slow or overlay networks
 /// (e.g. ZeroTier).
 const BROWSE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -89,7 +89,7 @@ pub async fn discover_all() -> Vec<MdnsNode> {
 /// - `--all`  browse every service type on the network
 /// - `-p`     parseable semicolon-delimited output
 /// - `-r`     resolve (include address + port)
-/// - `-t`     **terminate** after the initial scan — crucial so the
+/// - `-t`     **terminate** after the initial scan (crucial so the
 ///            process exits naturally and flushes its stdout buffer
 async fn browse_all() -> Result<Vec<MdnsNode>, String> {
     // Sanity-check: can we talk to avahi at all?
@@ -106,7 +106,7 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
     if sanity_lines == 0 && !sanity.status.success() {
         let stderr = String::from_utf8_lossy(&sanity.stderr);
         tracing::warn!(
-            "avahi-browse returned no output — is avahi-daemon reachable? stderr: {stderr}"
+            "avahi-browse returned no output, is avahi-daemon reachable? stderr: {stderr}"
         );
     } else {
         tracing::debug!("avahi-browse sanity check OK ({sanity_lines} lines)");
@@ -138,7 +138,7 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
         }
         Err(_) => {
             tracing::warn!(
-                "avahi-browse did not terminate within {sec}s — killing",
+                "avahi-browse did not terminate within {sec}s, killing",
                 sec = BROWSE_TIMEOUT.as_secs()
             );
             let _ = child.kill().await;

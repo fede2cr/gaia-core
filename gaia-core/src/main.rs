@@ -1,4 +1,4 @@
-//! Server entry-point – Axum + Leptos SSR + reverse proxy.
+//! Server entry-point - Axum + Leptos SSR + reverse proxy.
 
 #[cfg(feature = "ssr")]
 #[tokio::main]
@@ -78,7 +78,7 @@ async fn main() {
     let app = Router::new()
         // Camera-stream MJPEG proxy (must be before Leptos catch-all).
         .route("/api/camera-stream", get(proxy::camera_stream_handler))
-        // Reverse-proxy sub-router — mounted before the Leptos catch-all.
+        // Reverse-proxy sub-router, mounted before the Leptos catch-all.
         .nest("/proxy", proxy_router)
         // Leptos SSR routes.
         .leptos_routes(&leptos_options, routes, App)
@@ -115,7 +115,7 @@ async fn main() {
             }
             Err(_) => (
                 axum::http::StatusCode::NOT_FOUND,
-                "404 — Not Found",
+                "404 - Not Found",
             )
                 .into_response(),
         }
@@ -125,5 +125,5 @@ async fn main() {
 /// When compiled without the `ssr` feature, main is a no-op stub.
 #[cfg(not(feature = "ssr"))]
 pub fn main() {
-    // Intentionally empty – the WASM library entry is in lib.rs.
+    // Intentionally empty, the WASM library entry is in lib.rs.
 }

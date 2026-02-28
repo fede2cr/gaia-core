@@ -1,4 +1,4 @@
-//! Gaia Core – Central web interface and reverse proxy for all Gaia projects.
+//! Gaia Core - Central web interface and reverse proxy for all Gaia projects.
 
 pub mod app;
 pub mod components;
