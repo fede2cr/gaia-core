@@ -309,6 +309,9 @@ pub async fn start(name: &str) -> Result<(), String> {
     }
 
     // Dynamic args for containers that need runtime information.
+    if name == "gaia-audio-capture" {
+        build_audio_capture_args(&mut args).await;
+    }
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
     }
@@ -335,6 +338,35 @@ pub async fn start(name: &str) -> Result<(), String> {
         let msg = format!("{cmd} run {name} failed: {stderr}");
         tracing::error!("{msg}");
         Err(msg)
+    }
+}
+
+/// Build dynamic container arguments for the gaia-audio-capture container.
+///
+/// Reads the microphone device assigned to project "audio" from the DB
+/// and passes it as `REC_CARD` so the capture server uses the correct
+/// ALSA device instead of the (broken-in-container) "default" PCM.
+async fn build_audio_capture_args(args: &mut Vec<String>) {
+    let rec_card = match crate::db::get_all_assignments().await {
+        Ok(assignments) => assignments
+            .iter()
+            .find(|a| a.project == "audio")
+            .map(|a| a.device_id.clone()),
+        Err(e) => {
+            tracing::warn!("Cannot read assignments for audio mic: {e}");
+            None
+        }
+    };
+
+    if let Some(card) = rec_card {
+        tracing::info!("gaia-audio-capture: using microphone REC_CARD={card}");
+        args.push("-e".into());
+        args.push(format!("REC_CARD={card}"));
+    } else {
+        tracing::warn!(
+            "gaia-audio-capture: no microphone assigned to project 'audio' — \
+             container will try ALSA default (may fail)"
+        );
     }
 }
 
