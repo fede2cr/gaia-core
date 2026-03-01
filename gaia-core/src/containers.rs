@@ -8,8 +8,15 @@
 //! On **start** the flow is: pull image → remove stale container → run.
 //! This guarantees the latest image is always used and avoids the
 //! "no such container" error when the container has never been created.
+//!
+//! Container specifications (image, volumes, devices, etc.) are loaded from
+/// `containers.toml` (next to `compose.yaml`) at startup.  If the file is
+/// missing or unreadable the built-in defaults are used.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+use serde::Deserialize;
 use tokio::process::Command;
 
 /// Which container runtime is available on this system.
@@ -64,138 +71,219 @@ fn runtime_cmd(rt: Runtime) -> &'static str {
 
 // ── Container specification ──────────────────────────────────────────────
 
+/// Default path for the container configuration file.
+/// Lives next to `compose.yaml` in the project root.
+const CONFIG_PATH: &str = "containers.toml";
+
 /// Everything needed to `run` a managed container from scratch.
+///
+/// Loaded from `containers.toml` (or built-in defaults).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
 struct ContainerSpec {
-    image: &'static str,
-    env: &'static [&'static str],         // "KEY=VALUE"
-    devices: &'static [&'static str],     // "/dev/x:/dev/x"
-    volumes: &'static [&'static str],     // "name:/path" or "host:container:opts"
-    group_add: &'static [&'static str],   // supplementary groups
-    privileged: bool,                     // --privileged
-    extra_args: &'static [&'static str],  // additional `podman run` flags
-    restart: &'static str,                // restart policy
-    // All containers use --network host for mDNS multicast.
+    image: String,
+    #[serde(default)]
+    env: Vec<String>,
+    #[serde(default)]
+    devices: Vec<String>,
+    #[serde(default)]
+    volumes: Vec<String>,
+    #[serde(default)]
+    group_add: Vec<String>,
+    #[serde(default)]
+    privileged: bool,
+    #[serde(default)]
+    extra_args: Vec<String>,
+    #[serde(default = "default_restart")]
+    restart: String,
 }
 
-/// Registry of all managed containers.
-///
-/// The key is the container name (e.g. `"gaia-radio-web"`).
-/// This mirrors the compose.yaml definitions for the `profiles: ["managed"]`
-/// services so we can create containers from scratch without compose.
-fn spec_for(container_name: &str) -> Option<ContainerSpec> {
-    match container_name {
-        // ── Gaia Audio ───────────────────────────────────
-        "gaia-audio-capture" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-audio-capture",
-            env: &[],
-            devices: &["/dev/snd:/dev/snd"],
-            volumes: &[
-                "gaia-audio-data:/data",
-                "/proc/asound:/proc/asound:ro",
-            ],
-            group_add: &["audio"],
+fn default_restart() -> String {
+    "unless-stopped".into()
+}
+
+impl Default for ContainerSpec {
+    fn default() -> Self {
+        Self {
+            image: String::new(),
+            env: vec![],
+            devices: vec![],
+            volumes: vec![],
+            group_add: vec![],
             privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        "gaia-audio-processing" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-audio-processing",
-            env: &[],
-            devices: &[],
-            volumes: &["gaia-audio-data:/data", "gaia-audio-models:/models"],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        "gaia-audio-web" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-audio-web",
-            env: &["LEPTOS_SITE_ADDR=0.0.0.0:3000"],
-            devices: &[],
-            volumes: &["gaia-audio-data:/data"],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        // ── Gaia Radio ───────────────────────────────────
-        "gaia-radio-capture" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-radio-capture",
-            env: &[],
-            devices: &["/dev/bus/usb:/dev/bus/usb"],
-            volumes: &[],
-            group_add: &[],
-            privileged: true,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        "gaia-radio-processing" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-radio-processing",
-            env: &[],
-            devices: &[],
-            volumes: &["readsb-json:/run/readsb"],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        "gaia-radio-web" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-radio-web",
-            env: &["WEB_PORT=8080"],
-            devices: &[],
-            volumes: &[
-                "readsb-json:/run/readsb:ro",
-                "co2-state:/var/lib/co2tracker",
-            ],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        // ── GMN / RMS ────────────────────────────────────
-        // Camera access in rootless podman requires a host udev rule
-        // that sets MODE="0666" on video devices (see setup-host.sh).
-        // The actual device path and volume mounts are resolved
-        // dynamically in `start()` using `build_gmn_config_args()`.
-        "gaia-gmn-config" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-gmn-config",
-            env: &["STREAM_PORT=8181"],
-            devices: &[],
-            volumes: &[],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        // Rust-based meteor capture (replaces RMS capture path).
-        // Camera device is injected via VIDEO_DEVICE env var from
-        // the hardware assignment DB, same as gaia-gmn-config.
-        "gaia-gmn-capture" => Some(ContainerSpec {
-            image: "docker.io/fede2/gaia-gmn-capture",
-            env: &[],
-            devices: &[],
-            volumes: &["gaia-gmn-data:/data"],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        // RMS is a single container for GMN capture + processing.
-        // It will be split into separate containers later.
-        // Video devices are mounted dynamically in start() via
-        // mount_video_devices().  The user is "rms" (uid 1000).
-        "rms" => Some(ContainerSpec {
-            image: "docker.io/fede2/rms",
-            env: &[],
-            devices: &[],
-            volumes: &["rms-data:/home/rms/RMS_data"],
-            group_add: &[],
-            privileged: false,
-            extra_args: &[],
-            restart: "unless-stopped",
-        }),
-        _ => None,
+            extra_args: vec![],
+            restart: default_restart(),
+        }
     }
+}
+
+/// The top-level TOML file: a map of container-name → spec.
+///
+/// ```toml
+/// [gaia-audio-capture]
+/// image = "docker.io/fede2/gaia-audio-capture"
+/// devices = ["/dev/snd:/dev/snd"]
+/// volumes = ["gaia-audio-data:/data", "/proc/asound:/proc/asound:ro"]
+/// group_add = ["audio"]
+/// ```
+#[derive(Clone, Debug, Default, Deserialize)]
+struct ContainerConfig {
+    #[serde(flatten)]
+    containers: HashMap<String, ContainerSpec>,
+}
+
+/// Cached config loaded once at startup.
+static CONFIG: OnceLock<ContainerConfig> = OnceLock::new();
+
+/// Load the container config file, falling back to built-in defaults.
+fn load_config() -> ContainerConfig {
+    let path = std::env::var("GAIA_CONTAINERS_CONFIG")
+        .unwrap_or_else(|_| CONFIG_PATH.into());
+
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match toml::from_str::<ContainerConfig>(&text) {
+            Ok(cfg) => {
+                tracing::info!(
+                    "Loaded container config from {path} ({} containers)",
+                    cfg.containers.len()
+                );
+                cfg
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse {path}: {e} — using built-in defaults"
+                );
+                builtin_config()
+            }
+        },
+        Err(_) => {
+            tracing::info!(
+                "No container config at {path} — using built-in defaults"
+            );
+            builtin_config()
+        }
+    }
+}
+
+/// Get the (cached) container config.
+fn config() -> &'static ContainerConfig {
+    CONFIG.get_or_init(load_config)
+}
+
+/// Look up a container spec by name.
+fn spec_for(container_name: &str) -> Option<ContainerSpec> {
+    config().containers.get(container_name).cloned()
+}
+
+/// Hard-coded defaults so gaia-core works out of the box without a config file.
+fn builtin_config() -> ContainerConfig {
+    let mut m = HashMap::new();
+
+    m.insert("gaia-audio-capture".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-audio-capture".into(),
+        devices: vec!["/dev/snd:/dev/snd".into()],
+        volumes: vec![
+            "gaia-audio-data:/data".into(),
+            "/proc/asound:/proc/asound:ro".into(),
+        ],
+        group_add: vec!["audio".into()],
+        ..Default::default()
+    });
+
+    m.insert("gaia-audio-processing".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-audio-processing".into(),
+        volumes: vec![
+            "gaia-audio-data:/data".into(),
+            "gaia-audio-models:/models".into(),
+        ],
+        ..Default::default()
+    });
+
+    m.insert("gaia-audio-web".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-audio-web".into(),
+        env: vec!["LEPTOS_SITE_ADDR=0.0.0.0:3000".into()],
+        volumes: vec!["gaia-audio-data:/data".into()],
+        ..Default::default()
+    });
+
+    m.insert("gaia-radio-capture".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-radio-capture".into(),
+        devices: vec!["/dev/bus/usb:/dev/bus/usb".into()],
+        privileged: true,
+        ..Default::default()
+    });
+
+    m.insert("gaia-radio-processing".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-radio-processing".into(),
+        volumes: vec!["readsb-json:/run/readsb".into()],
+        ..Default::default()
+    });
+
+    m.insert("gaia-radio-web".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-radio-web".into(),
+        env: vec!["WEB_PORT=8080".into()],
+        volumes: vec![
+            "readsb-json:/run/readsb:ro".into(),
+            "co2-state:/var/lib/co2tracker".into(),
+        ],
+        ..Default::default()
+    });
+
+    m.insert("gaia-gmn-config".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-gmn-config".into(),
+        env: vec!["STREAM_PORT=8181".into()],
+        ..Default::default()
+    });
+
+    m.insert("gaia-gmn-capture".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-gmn-capture".into(),
+        volumes: vec!["gaia-gmn-data:/data".into()],
+        ..Default::default()
+    });
+
+    m.insert("rms".into(), ContainerSpec {
+        image: "docker.io/fede2/rms".into(),
+        volumes: vec!["rms-data:/home/rms/RMS_data".into()],
+        ..Default::default()
+    });
+
+    ContainerConfig { containers: m }
+}
+
+// ── Container lifecycle status ───────────────────────────────────────────
+
+/// Global container status tracker.
+///
+/// Tracks the lifecycle phase of each container: `"stopped"`, `"pulling"`,
+/// `"starting"`, `"running"`, or `"error: <message>"`.
+static STATUSES: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+
+fn statuses() -> &'static RwLock<HashMap<String, String>> {
+    STATUSES.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Set the lifecycle status of a container.
+pub fn set_status(name: &str, status: &str) {
+    if let Ok(mut map) = statuses().write() {
+        map.insert(name.to_string(), status.to_string());
+    }
+}
+
+/// Get the lifecycle status of a single container.
+pub fn get_status(name: &str) -> String {
+    statuses()
+        .read()
+        .ok()
+        .and_then(|map| map.get(name).cloned())
+        .unwrap_or_else(|| "stopped".into())
+}
+
+/// Snapshot of all container statuses (for the UI to poll).
+pub fn all_statuses() -> Vec<(String, String)> {
+    statuses()
+        .read()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default()
 }
 
 /// Derive the container name from a project slug and container kind.
@@ -268,9 +356,11 @@ pub async fn start(name: &str) -> Result<(), String> {
     let spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
 
     // 1. Pull the latest image.
-    pull(cmd, spec.image).await?;
+    set_status(name, "pulling");
+    pull(cmd, &spec.image).await?;
 
     // 2. Remove any stale container with the same name.
+    set_status(name, "starting");
     remove(cmd, name).await;
 
     // 3. Build the `run` command; all containers use host networking.
@@ -285,7 +375,7 @@ pub async fn start(name: &str) -> Result<(), String> {
 
     // Restart policy
     args.push("--restart".into());
-    args.push(spec.restart.into());
+    args.push(spec.restart.clone());
 
     // Privileged mode (e.g. USB access for SDR dongles)
     if spec.privileged {
@@ -293,32 +383,32 @@ pub async fn start(name: &str) -> Result<(), String> {
     }
 
     // Environment variables
-    for e in spec.env {
+    for e in &spec.env {
         args.push("-e".into());
-        args.push((*e).into());
+        args.push(e.clone());
     }
 
     // Device mappings
-    for d in spec.devices {
+    for d in &spec.devices {
         args.push("--device".into());
-        args.push((*d).into());
+        args.push(d.clone());
     }
 
     // Volumes
-    for v in spec.volumes {
+    for v in &spec.volumes {
         args.push("-v".into());
-        args.push((*v).into());
+        args.push(v.clone());
     }
 
     // Supplementary groups
-    for g in spec.group_add {
+    for g in &spec.group_add {
         args.push("--group-add".into());
-        args.push((*g).into());
+        args.push(g.clone());
     }
 
     // Extra arguments (e.g. --userns=keep-id)
-    for a in spec.extra_args {
-        args.push((*a).into());
+    for a in &spec.extra_args {
+        args.push(a.clone());
     }
 
     // Dynamic args for containers that need runtime information.
@@ -336,7 +426,7 @@ pub async fn start(name: &str) -> Result<(), String> {
     }
 
     // Image (must be last)
-    args.push(spec.image.into());
+    args.push(spec.image);
 
     tracing::info!("Running container '{name}' via {cmd}");
 
@@ -348,11 +438,13 @@ pub async fn start(name: &str) -> Result<(), String> {
 
     if output.status.success() {
         tracing::info!("Container '{name}' started");
+        set_status(name, "running");
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let msg = format!("{cmd} run {name} failed: {stderr}");
         tracing::error!("{msg}");
+        set_status(name, &format!("error: {msg}"));
         Err(msg)
     }
 }
@@ -498,6 +590,7 @@ pub async fn stop(name: &str) -> Result<(), String> {
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
+    set_status(name, "stopped");
     tracing::info!("Stopping container '{name}' via {cmd}");
 
     let output = Command::new(cmd)
@@ -553,18 +646,28 @@ pub async fn sync_with_db() {
         let name = container_name(slug, kind);
         let running = is_running(&name).await;
 
-        match (enabled, running) {
+        match (*enabled, running) {
+            (true, true) => {
+                // Already running from a previous session.
+                set_status(&name, "running");
+            }
             (true, false) => {
-                if let Err(e) = start(&name).await {
-                    tracing::warn!("Startup sync: could not start {name}: {e}");
-                }
+                // Should be running but isn't — start in background.
+                let name = name.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = start(&name).await {
+                        tracing::warn!("Startup sync: could not start {name}: {e}");
+                    }
+                });
             }
             (false, true) => {
                 if let Err(e) = stop(&name).await {
                     tracing::warn!("Startup sync: could not stop {name}: {e}");
                 }
             }
-            _ => {} // already in the desired state
+            (false, false) => {
+                set_status(&name, "stopped");
+            }
         }
     }
     tracing::info!("Container sync complete ({} entries)", states.len());

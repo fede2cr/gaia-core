@@ -5,6 +5,46 @@ use leptos::*;
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::toggle_container;
 
+/// Map `(slug, kind)` to the container name used by the runtime.
+///
+/// Mirrors `containers::container_name()` but is available on both
+/// server and client targets.
+fn cname(slug: &str, kind: &str) -> String {
+    if slug == "gmn" && kind == "processing" {
+        "rms".into()
+    } else {
+        format!("gaia-{slug}-{kind}")
+    }
+}
+
+/// Inline lifecycle badge shown next to a toggle when the container is
+/// in a transitional state (pulling / starting / error).
+#[component]
+fn LifecycleBadge(
+    /// Reactive status string for this container.
+    #[prop(into)]
+    status: Signal<String>,
+) -> impl IntoView {
+    move || {
+        let s = status.get();
+        match s.as_str() {
+            "pulling" => view! {
+                <span class="lifecycle-badge lifecycle-pulling">"Pulling…"</span>
+            }
+            .into_view(),
+            "starting" => view! {
+                <span class="lifecycle-badge lifecycle-starting">"Starting…"</span>
+            }
+            .into_view(),
+            s if s.starts_with("error") => view! {
+                <span class="lifecycle-badge lifecycle-error">{s.to_string()}</span>
+            }
+            .into_view(),
+            _ => ().into_view(),
+        }
+    }
+}
+
 /// A card showing project name, description, and individual toggles for
 /// capture / processing / web containers.
 #[component]
@@ -30,6 +70,30 @@ pub fn ProjectCard(
 
     let slug_for_link = slug.clone();
     let slug_for_config = slug.clone();
+
+    // ── Lifecycle status from context (polled by Home) ───────────────
+    let status_list = use_context::<Signal<Vec<(String, String)>>>()
+        .unwrap_or(Signal::derive(|| vec![]));
+
+    let cap_name = cname(&slug, "capture");
+    let proc_name = cname(&slug, "processing");
+    let web_name = cname(&slug, "web");
+
+    let lookup_status = move |name: String| {
+        let name = name.clone();
+        Signal::derive(move || {
+            status_list
+                .get()
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, s)| s.clone())
+                .unwrap_or_default()
+        })
+    };
+
+    let cap_status = lookup_status(cap_name);
+    let proc_status = lookup_status(proc_name);
+    let web_status = lookup_status(web_name);
 
     // Helper: create a toggle action for a given container kind.
     let make_action = {
@@ -85,9 +149,18 @@ pub fn ProjectCard(
             <p class="project-description">{&description}</p>
 
             <div class="container-toggle-group">
-                <ToggleSwitch label="Capture".to_string()   checked=capture    on_toggle=on_capture />
-                <ToggleSwitch label="Processing".to_string() checked=processing on_toggle=on_processing />
-                <ToggleSwitch label="Web".to_string()        checked=web        on_toggle=on_web />
+                <div class="container-toggle-item">
+                    <ToggleSwitch label="Capture".to_string()   checked=capture    on_toggle=on_capture />
+                    <LifecycleBadge status=cap_status />
+                </div>
+                <div class="container-toggle-item">
+                    <ToggleSwitch label="Processing".to_string() checked=processing on_toggle=on_processing />
+                    <LifecycleBadge status=proc_status />
+                </div>
+                <div class="container-toggle-item">
+                    <ToggleSwitch label="Web".to_string()        checked=web        on_toggle=on_web />
+                    <LifecycleBadge status=web_status />
+                </div>
             </div>
 
             <div class="project-card-footer">

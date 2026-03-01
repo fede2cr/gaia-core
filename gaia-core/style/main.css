@@ -519,6 +519,47 @@ code {
     flex: 0 0 auto;
 }
 
+/* ─── Container Toggle Item (toggle + lifecycle badge) ─────────────────── */
+
+.container-toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+/* ─── Lifecycle Badges ─────────────────────────────────────────────────── */
+
+.lifecycle-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+.lifecycle-pulling {
+    color: var(--color-primary, #3b82f6);
+    background: rgba(59, 130, 246, 0.12);
+    animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+.lifecycle-starting {
+    color: var(--color-warning, #f59e0b);
+    background: rgba(245, 158, 11, 0.12);
+    animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+.lifecycle-error {
+    color: var(--color-danger, #ef4444);
+    background: rgba(239, 68, 68, 0.12);
+}
+
+@keyframes pulse-opacity {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 /* ─── Container Badges (Settings page) ─────────────────────────────────── */
 
 .container-badges {

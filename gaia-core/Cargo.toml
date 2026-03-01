@@ -37,6 +37,7 @@ hyper-util          = { version = "0.1", optional = true }
 http-body-util      = { version = "0.1", optional = true }
 mime_guess          = { version = "2", optional = true }
 rusqlite            = { version = "0.31", features = ["bundled"], optional = true }
+toml                = { version = "0.8", optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
 wasm-bindgen              = { version = "0.2", optional = true }
@@ -69,6 +70,7 @@ ssr = [
     "dep:http-body-util",
     "dep:mime_guess",
     "dep:rusqlite",
+    "dep:toml",
 ]
 
 [package.metadata.leptos]

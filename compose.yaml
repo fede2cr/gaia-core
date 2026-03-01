@@ -17,6 +17,8 @@ services:
     volumes:
       - gaia-core-data:/app/data
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
+      - /proc/asound:/proc/asound:ro
+      - /dev/snd:/dev/snd
     environment:
       - GAIA_AUDIO_URL=http://localhost:3000
       - GAIA_RADIO_URL=http://localhost:8080

@@ -5,12 +5,33 @@ use leptos::*;
 use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::project_card::ProjectCard;
-use crate::server_fns::get_projects;
+use crate::server_fns::{get_container_statuses, get_projects};
 
 /// The main dashboard page.
 #[component]
 pub fn Home() -> impl IntoView {
     let targets = create_resource(|| (), |_| get_projects());
+
+    // ── Container lifecycle status polling ────────────────────────────
+    let (poll_tick, set_poll_tick) = create_signal(0_u32);
+    let status_resource = create_resource(move || poll_tick.get(), |_| get_container_statuses());
+
+    // Flatten the resource into a simple signal for child components.
+    let status_list: Signal<Vec<(String, String)>> = Signal::derive(move || {
+        status_resource
+            .get()
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+    });
+    provide_context(status_list);
+
+    // Poll every 3 s (only runs in the browser after hydration).
+    set_interval(
+        move || {
+            set_poll_tick.update(|n| *n = n.wrapping_add(1));
+        },
+        std::time::Duration::from_secs(3),
+    );
 
     view! {
         <section class="dashboard">

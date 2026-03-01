@@ -1,0 +1,76 @@
+# Gaia – Container Configuration
+#
+# Each section defines a managed container. The section name is the
+# container name passed to `podman run --name <name>`.
+#
+# Fields:
+#   image       – OCI image reference (required)
+#   env         – list of "KEY=VALUE" environment variables
+#   devices     – list of "host:container" device mappings
+#   volumes     – list of "name:/path" or "host:container:opts" volume mounts
+#   group_add   – supplementary groups (e.g. "audio")
+#   privileged  – set to true for --privileged (default: false)
+#   extra_args  – additional podman run flags
+#   restart     – restart policy (default: "unless-stopped")
+#
+# All containers use --network host for mDNS multicast; that is not
+# configurable here.
+#
+# Dynamic arguments (device assignments read from the database at
+# container start time) are still handled in Rust code, not here.
+
+# ── Gaia Audio ────────────────────────────────────────────────────────
+
+[gaia-audio-capture]
+image   = "docker.io/fede2/gaia-audio-capture"
+devices = ["/dev/snd:/dev/snd"]
+volumes = [
+    "gaia-audio-data:/data",
+    "/proc/asound:/proc/asound:ro",
+]
+group_add = ["audio"]
+
+[gaia-audio-processing]
+image   = "docker.io/fede2/gaia-audio-processing"
+volumes = [
+    "gaia-audio-data:/data",
+    "gaia-audio-models:/models",
+]
+
+[gaia-audio-web]
+image = "docker.io/fede2/gaia-audio-web"
+env   = ["LEPTOS_SITE_ADDR=0.0.0.0:3000"]
+volumes = ["gaia-audio-data:/data"]
+
+# ── Gaia Radio ────────────────────────────────────────────────────────
+
+[gaia-radio-capture]
+image      = "docker.io/fede2/gaia-radio-capture"
+devices    = ["/dev/bus/usb:/dev/bus/usb"]
+privileged = true
+
+[gaia-radio-processing]
+image   = "docker.io/fede2/gaia-radio-processing"
+volumes = ["readsb-json:/run/readsb"]
+
+[gaia-radio-web]
+image = "docker.io/fede2/gaia-radio-web"
+env   = ["WEB_PORT=8080"]
+volumes = [
+    "readsb-json:/run/readsb:ro",
+    "co2-state:/var/lib/co2tracker",
+]
+
+# ── GMN / Meteor ──────────────────────────────────────────────────────
+
+[gaia-gmn-config]
+image = "docker.io/fede2/gaia-gmn-config"
+env   = ["STREAM_PORT=8181"]
+
+[gaia-gmn-capture]
+image   = "docker.io/fede2/gaia-gmn-capture"
+volumes = ["gaia-gmn-data:/data"]
+
+[rms]
+image   = "docker.io/fede2/rms"
+volumes = ["rms-data:/home/rms/RMS_data"]

@@ -70,15 +70,17 @@ pub async fn toggle_container(
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
 
-    // Actually start or stop the container via the runtime CLI.
     let name = crate::containers::container_name(&slug, &container_kind);
     if enabled {
-        crate::containers::start(&name)
-            .await
-            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+        // Start in the background — the UI polls for status updates.
+        let name_bg = name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::containers::start(&name_bg).await {
+                tracing::error!("Background start of '{name_bg}' failed: {e}");
+            }
+        });
     } else {
-        // Best-effort stop: don't fail the toggle if the container is
-        // already stopped or doesn't exist yet.
+        // Stop is quick enough to await (10 s timeout max).
         let _ = crate::containers::stop(&name).await;
     }
 
@@ -88,6 +90,15 @@ pub async fn toggle_container(
     );
 
     get_projects().await
+}
+
+/// Poll the lifecycle status of all managed containers.
+///
+/// Returns `(container_name, status)` pairs where status is one of:
+/// `"stopped"`, `"pulling"`, `"starting"`, `"running"`, or `"error: <msg>"`.
+#[server(GetContainerStatuses, "/api")]
+pub async fn get_container_statuses() -> Result<Vec<(String, String)>, ServerFnError> {
+    Ok(crate::containers::all_statuses())
 }
 
 /// Return the current list of project targets with persisted container states.

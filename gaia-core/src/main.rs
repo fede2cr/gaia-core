@@ -36,7 +36,9 @@ async fn main() {
     gaia_core::db::migrate_legacy_json().await;
 
     // ── Sync containers with persisted toggle state ─────────────────────
-    gaia_core::containers::sync_with_db().await;
+    // Spawned in background so the web UI starts immediately.
+    // Container lifecycle statuses are tracked and polled by the dashboard.
+    tokio::spawn(gaia_core::containers::sync_with_db());
 
     // ── Proxy targets (with persisted container states) ──────────────────
     let mut targets = config::default_targets();
