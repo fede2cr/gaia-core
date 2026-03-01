@@ -102,7 +102,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             image: "docker.io/fede2/gaia-audio-processing",
             env: &[],
             devices: &[],
-            volumes: &["gaia-audio-data:/data"],
+            volumes: &["gaia-audio-data:/data", "gaia-audio-models:/models"],
             group_add: &[],
             privileged: false,
             extra_args: &[],
