@@ -143,20 +143,26 @@ async fn detect_microphones_proc() -> Vec<HwDevice> {
 
         // Prefer the human-readable card label from /proc/asound/cards;
         // fall back to the PCM stream name.
-        let label = card_labels
-            .get(&card)
-            .cloned()
-            .unwrap_or_else(|| {
+        let (device_id, label) = match card_labels.get(&card) {
+            Some(info) => (
+                // Use the ALSA card name so the ID works inside containers
+                // where the numeric card index may differ from the host.
+                format!("hw:CARD={},DEV={dev}", info.alsa_name),
+                info.long_name.clone(),
+            ),
+            None => (
+                format!("hw:{card},{dev}"),
                 if stream_name.is_empty() {
                     format!("Card {card} Device {dev}")
                 } else {
                     stream_name
-                }
-            });
+                },
+            ),
+        };
 
         devices.push(HwDevice {
             kind: DeviceKind::Microphone,
-            id: format!("hw:{card},{dev}"),
+            id: device_id,
             label,
             suggested_project: "audio".into(),
         });
@@ -165,8 +171,18 @@ async fn detect_microphones_proc() -> Vec<HwDevice> {
     devices
 }
 
-/// Parse `/proc/asound/cards` into a map of card-number → long name.
-fn parse_card_labels(text: &str) -> std::collections::HashMap<u32, String> {
+/// Info extracted from `/proc/asound/cards` for one sound card.
+#[derive(Clone, Debug)]
+struct CardInfo {
+    /// Short ALSA identifier (e.g. "iCE", "Generic_1") — used in
+    /// `hw:CARD=<name>,DEV=<n>` which is stable across namespaces.
+    alsa_name: String,
+    /// Human-readable long name (e.g. "Blue Snowball iCE").
+    long_name: String,
+}
+
+/// Parse `/proc/asound/cards` into a map of card-number → info.
+fn parse_card_labels(text: &str) -> std::collections::HashMap<u32, CardInfo> {
     let mut map = std::collections::HashMap::new();
     for line in text.lines() {
         let trimmed = line.trim();
@@ -179,12 +195,20 @@ fn parse_card_labels(text: &str) -> std::collections::HashMap<u32, String> {
             .split_whitespace()
             .next()
             .and_then(|s| s.parse::<u32>().ok());
+        // The ALSA short name is inside the first [ ... ] bracket.
+        let alsa_name = trimmed
+            .find('[')
+            .and_then(|start| {
+                trimmed[start + 1..]
+                    .find(']')
+                    .map(|end| trimmed[start + 1..start + 1 + end].trim().to_string())
+            });
         // The long name comes after " - "
         let long_name = trimmed
             .find(" - ")
             .map(|pos| trimmed[pos + 3..].trim().to_string());
-        if let (Some(num), Some(name)) = (card_num, long_name) {
-            map.insert(num, name);
+        if let (Some(num), Some(aname), Some(lname)) = (card_num, alsa_name, long_name) {
+            map.insert(num, CardInfo { alsa_name: aname, long_name: lname });
         }
     }
     map
@@ -208,6 +232,7 @@ async fn detect_microphones_arecord() -> Vec<HwDevice> {
     let mut devices = Vec::new();
 
     // Lines like: "card 1: Device [USB Audio Device], device 0: USB Audio [USB Audio]"
+    // also: "card 4: iCE [Blue Snowball iCE], device 0: USB Audio [USB Audio]"
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("card ") {
@@ -224,6 +249,15 @@ async fn detect_microphones_arecord() -> Vec<HwDevice> {
                         .and_then(|s| s.trim().parse::<u32>().ok())
                 });
 
+            // Extract the ALSA card name from first [...] after "card N:"
+            // e.g. "card 4: iCE [Blue Snowball iCE]" → card_name = "iCE"
+            let card_name = trimmed
+                .find(':')
+                .and_then(|colon_pos| {
+                    let after_colon = &trimmed[colon_pos + 1..];
+                    after_colon.trim().split_whitespace().next().map(|s| s.to_string())
+                });
+
             if let (Some(card), Some(dev)) = (card_num, dev_num) {
                 let label = trimmed
                     .find('[')
@@ -234,9 +268,16 @@ async fn detect_microphones_arecord() -> Vec<HwDevice> {
                     })
                     .unwrap_or_else(|| format!("Card {card} Device {dev}"));
 
+                // Use card name for stable ID across namespaces;
+                // fall back to numeric index if we can't parse the name.
+                let device_id = match &card_name {
+                    Some(name) if !name.is_empty() => format!("hw:CARD={name},DEV={dev}"),
+                    _ => format!("hw:{card},{dev}"),
+                };
+
                 devices.push(HwDevice {
                     kind: DeviceKind::Microphone,
-                    id: format!("hw:{card},{dev}"),
+                    id: device_id,
                     label,
                     suggested_project: "audio".into(),
                 });

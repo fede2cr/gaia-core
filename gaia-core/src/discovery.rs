@@ -46,6 +46,7 @@ const SERVICE_TYPES: &[(&str, &str)] = &[
     ("_gaia-aud-web._tcp", "audio"),
     // Global Meteor Network
     ("_rms._tcp", "gmn"),
+    ("_gaia-gmn-cap._tcp", "gmn"),
 ];
 
 /// Instance name prefixes → Gaia project slug mapping.

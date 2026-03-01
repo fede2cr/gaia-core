@@ -167,6 +167,19 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             extra_args: &[],
             restart: "unless-stopped",
         }),
+        // Rust-based meteor capture (replaces RMS capture path).
+        // Camera device is injected via VIDEO_DEVICE env var from
+        // the hardware assignment DB, same as gaia-gmn-config.
+        "gaia-gmn-capture" => Some(ContainerSpec {
+            image: "docker.io/fede2/gaia-gmn-capture",
+            env: &[],
+            devices: &[],
+            volumes: &["gaia-gmn-data:/data"],
+            group_add: &[],
+            privileged: false,
+            extra_args: &[],
+            restart: "unless-stopped",
+        }),
         // RMS is a single container for GMN capture + processing.
         // It will be split into separate containers later.
         // Video devices are mounted dynamically in start() via
@@ -194,9 +207,9 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
 /// - `("audio", "capture")` → `"gaia-audio-capture"`
 /// - `("radio", "web")`     → `"gaia-radio-web"`
 pub fn container_name(slug: &str, kind: &str) -> String {
-    // GMN uses a single "rms" container for capture + processing.
-    // Once RMS is split, this special case can be removed.
-    if slug == "gmn" && (kind == "capture" || kind == "processing") {
+    // Legacy: the monolithic RMS container is still used for "processing"
+    // until the processing pipeline is extracted.
+    if slug == "gmn" && kind == "processing" {
         return "rms".into();
     }
     format!("gaia-{slug}-{kind}")
@@ -315,6 +328,9 @@ pub async fn start(name: &str) -> Result<(), String> {
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
     }
+    if name == "gaia-gmn-capture" {
+        build_gmn_capture_args(&mut args).await;
+    }
     if name == "rms" {
         build_rms_args(&mut args).await;
     }
@@ -424,6 +440,41 @@ async fn build_gmn_config_args(args: &mut Vec<String>) {
         tracing::warn!("No /dev/video* devices found on host");
     } else {
         tracing::info!("gaia-gmn-config: mounted devices {:?}", mounted);
+    }
+}
+
+/// Build dynamic container arguments for gaia-gmn-capture.
+///
+/// 1. Reads the camera device assigned to GMN from the database
+///    (falls back to `/dev/video0`).
+/// 2. Bind-mounts every `/dev/video*` node found on the host.
+/// 3. Sets the `VIDEO_DEVICE` and `STATION_ID` environment variables.
+async fn build_gmn_capture_args(args: &mut Vec<String>) {
+    let (video_device, station_id) = match crate::db::get_all_assignments().await {
+        Ok(assignments) => {
+            let dev = assignments
+                .iter()
+                .find(|a| a.project == "gmn")
+                .map(|a| a.device_id.clone())
+                .unwrap_or_else(|| "/dev/video0".into());
+            (dev, "XX0001".to_string())
+        }
+        Err(_) => ("/dev/video0".into(), "XX0001".to_string()),
+    };
+
+    tracing::info!("gaia-gmn-capture: using camera device {video_device}");
+    args.push("-e".into());
+    args.push(format!("VIDEO_DEVICE={video_device}"));
+    args.push("-e".into());
+    args.push(format!("STATION_ID={station_id}"));
+
+    let mounted = mount_video_devices(args).await;
+    if mounted.is_empty() {
+        args.push("-v".into());
+        args.push(format!("{video_device}:{video_device}"));
+        tracing::warn!("No /dev/video* devices found on host");
+    } else {
+        tracing::info!("gaia-gmn-capture: mounted devices {:?}", mounted);
     }
 }
 
