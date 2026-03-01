@@ -40,10 +40,10 @@ const SERVICE_TYPES: &[(&str, &str)] = &[
     // gaia-radio
     ("_adsbbeast._tcp", "radio"),
     ("_readsb._tcp", "radio"),
-    // gaia-audio
-    ("_gaia-audio-capture._tcp", "audio"),
-    ("_gaia-audio-processing._tcp", "audio"),
-    ("_gaia-audio-web._tcp", "audio"),
+    // gaia-audio (labels must be <=15 chars per RFC 6335)
+    ("_gaia-aud-cap._tcp", "audio"),
+    ("_gaia-aud-proc._tcp", "audio"),
+    ("_gaia-aud-web._tcp", "audio"),
     // Global Meteor Network
     ("_rms._tcp", "gmn"),
 ];

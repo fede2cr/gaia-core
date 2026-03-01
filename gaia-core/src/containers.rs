@@ -91,7 +91,7 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
             devices: &["/dev/snd:/dev/snd"],
             volumes: &[
                 "gaia-audio-data:/data",
-                "/proc/asound:/run/asound:ro",
+                "/proc/asound:/proc/asound:ro",
             ],
             group_add: &["audio"],
             privileged: false,
@@ -158,10 +158,24 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
         // The actual device path and volume mounts are resolved
         // dynamically in `start()` using `build_gmn_config_args()`.
         "gaia-gmn-config" => Some(ContainerSpec {
-            image: "gaia-gmn-config",
+            image: "docker.io/fede2/gaia-gmn-config",
             env: &["STREAM_PORT=8181"],
             devices: &[],
             volumes: &[],
+            group_add: &[],
+            privileged: false,
+            extra_args: &[],
+            restart: "unless-stopped",
+        }),
+        // RMS is a single container for GMN capture + processing.
+        // It will be split into separate containers later.
+        // Video devices are mounted dynamically in start() via
+        // mount_video_devices().  The user is "rms" (uid 1000).
+        "rms" => Some(ContainerSpec {
+            image: "docker.io/fede2/rms",
+            env: &[],
+            devices: &[],
+            volumes: &["rms-data:/home/rms/RMS_data"],
             group_add: &[],
             privileged: false,
             extra_args: &[],
@@ -180,6 +194,11 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
 /// - `("audio", "capture")` → `"gaia-audio-capture"`
 /// - `("radio", "web")`     → `"gaia-radio-web"`
 pub fn container_name(slug: &str, kind: &str) -> String {
+    // GMN uses a single "rms" container for capture + processing.
+    // Once RMS is split, this special case can be removed.
+    if slug == "gmn" && (kind == "capture" || kind == "processing") {
+        return "rms".into();
+    }
     format!("gaia-{slug}-{kind}")
 }
 
@@ -293,6 +312,9 @@ pub async fn start(name: &str) -> Result<(), String> {
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
     }
+    if name == "rms" {
+        build_rms_args(&mut args).await;
+    }
 
     // Image (must be last)
     args.push(spec.image.into());
@@ -314,6 +336,28 @@ pub async fn start(name: &str) -> Result<(), String> {
         tracing::error!("{msg}");
         Err(msg)
     }
+}
+
+/// Discover and bind-mount every `/dev/video*` node from the host.
+///
+/// Returns the list of mounted device paths (sorted), or an empty vec
+/// if no video devices were found on the host.
+async fn mount_video_devices(args: &mut Vec<String>) -> Vec<String> {
+    let mut mounted = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir("/dev").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("video") {
+                let path = format!("/dev/{name_str}");
+                args.push("-v".into());
+                args.push(format!("{path}:{path}"));
+                mounted.push(path);
+            }
+        }
+    }
+    mounted.sort();
+    mounted
 }
 
 /// Build dynamic container arguments for the gaia-gmn-config container.
@@ -338,20 +382,7 @@ async fn build_gmn_config_args(args: &mut Vec<String>) {
     args.push("-e".into());
     args.push(format!("VIDEO_DEVICE={video_device}"));
 
-    // Discover and bind-mount all /dev/video* nodes from the host.
-    let mut mounted = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir("/dev").await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("video") {
-                let path = format!("/dev/{name_str}");
-                args.push("-v".into());
-                args.push(format!("{path}:{path}"));
-                mounted.push(path);
-            }
-        }
-    }
+    let mounted = mount_video_devices(args).await;
 
     if mounted.is_empty() {
         // No video devices found; mount the assigned device path anyway
@@ -360,8 +391,22 @@ async fn build_gmn_config_args(args: &mut Vec<String>) {
         args.push(format!("{video_device}:{video_device}"));
         tracing::warn!("No /dev/video* devices found on host");
     } else {
-        mounted.sort();
         tracing::info!("gaia-gmn-config: mounted devices {:?}", mounted);
+    }
+}
+
+/// Build dynamic container arguments for the RMS container.
+///
+/// RMS needs all `/dev/video*` nodes bind-mounted for USB camera capture.
+/// Unlike gaia-gmn-config, RMS reads its camera device from its `.config`
+/// file rather than an environment variable.
+async fn build_rms_args(args: &mut Vec<String>) {
+    let mounted = mount_video_devices(args).await;
+
+    if mounted.is_empty() {
+        tracing::warn!("rms: no /dev/video* devices found on host");
+    } else {
+        tracing::info!("rms: mounted devices {:?}", mounted);
     }
 }
 

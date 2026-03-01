@@ -11,10 +11,7 @@ services:
   # Uses host networking so avahi-browse can discover mDNS services on
   # the physical LAN (multicast doesn't cross bridge networks).
   gaia-core:
-    image: gaia-core
-    build:
-      context: ./gaia-core
-      dockerfile: Containerfile
+    image: docker.io/fede2/gaia-core
     container_name: gaia-core
     network_mode: host
     volumes:
@@ -49,7 +46,7 @@ services:
       - audio
     volumes:
       - gaia-audio-data:/data
-      - /proc/asound:/run/asound:ro
+      - /proc/asound:/proc/asound:ro
     restart: unless-stopped
 
   gaia-audio-processing:
@@ -105,18 +102,27 @@ services:
     restart: unless-stopped
 
   # ── GMN / RMS ────────────────────────────────────────────────────────
-  # RMS currently has no web interface.  Uncomment when one is available.
-  # rms:
-  #   image: docker.io/fede2/rms
-  #   container_name: rms
-  #   profiles: ["managed"]
-  #   network_mode: host
-  #   devices:
-  #     - /dev/video0:/dev/video0
-  #   restart: unless-stopped
+  gaia-gmn-config:
+    image: docker.io/fede2/gaia-gmn-config
+    container_name: gaia-gmn-config
+    profiles: ["managed"]
+    network_mode: host
+    environment:
+      - STREAM_PORT=8181
+    restart: unless-stopped
+
+  rms:
+    image: docker.io/fede2/rms
+    container_name: rms
+    profiles: ["managed"]
+    network_mode: host
+    volumes:
+      - rms-data:/home/rms/RMS_data
+    restart: unless-stopped
 
 volumes:
   gaia-core-data:
   gaia-audio-data:
   readsb-json:
   co2-state:
+  rms-data:
