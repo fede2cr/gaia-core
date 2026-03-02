@@ -227,9 +227,16 @@ pub async fn assign_device(
     source: String,
     project: String,
 ) -> Result<Vec<DeviceAssignment>, ServerFnError> {
+    tracing::info!(
+        "assign_device: device_id={device_id}, source={source}, project={project}"
+    );
     crate::db::set_assignment(&device_id, &source, &project)
         .await
-        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+        .map_err(|e| {
+            tracing::error!("assign_device: DB write failed: {e}");
+            ServerFnError::<server_fn::error::NoCustomError>::ServerError(e)
+        })?;
+    tracing::info!("assign_device: persisted OK");
     get_assignments().await
 }
 

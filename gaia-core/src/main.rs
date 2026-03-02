@@ -1,5 +1,23 @@
 //! Server entry-point - Axum + Leptos SSR + reverse proxy.
 
+/// Axum middleware: prevent browsers from caching `/pkg/*` files so that
+/// new builds always deliver fresh JS and WASM bundles.
+#[cfg(feature = "ssr")]
+async fn no_cache_for_pkg(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let is_pkg = request.uri().path().starts_with("/pkg/");
+    let mut response = next.run(request).await;
+    if is_pkg {
+        response.headers_mut().insert(
+            http::header::CACHE_CONTROL,
+            http::HeaderValue::from_static("no-store, must-revalidate"),
+        );
+    }
+    response
+}
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
@@ -131,6 +149,9 @@ async fn main() {
                 .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
                 .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO))
         )
+        // Prevent browsers from caching /pkg/* files so new builds
+        // always deliver matching JS + WASM bundles.
+        .layer(axum::middleware::from_fn(no_cache_for_pkg))
         .fallback(fallback_handler)
         .with_state(leptos_options);
 

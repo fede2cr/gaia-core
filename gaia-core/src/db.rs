@@ -72,15 +72,19 @@ pub async fn set_container_enabled(
     container_kind: &str,
     enabled: bool,
 ) -> Result<(), String> {
+    tracing::info!(
+        "DB set_container_enabled: slug={slug}, kind={container_kind}, enabled={enabled}"
+    );
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    conn.execute(
+    let rows = conn.execute(
         "INSERT INTO container_state (slug, container_kind, enabled)
          VALUES (?1, ?2, ?3)
          ON CONFLICT(slug, container_kind) DO UPDATE SET enabled = excluded.enabled",
         params![slug, container_kind, enabled as i32],
     )
     .map_err(|e| format!("DB set_container_enabled: {e}"))?;
+    tracing::info!("DB set_container_enabled: {rows} row(s) affected");
     Ok(())
 }
 
@@ -128,6 +132,7 @@ pub async fn all_container_states() -> Result<Vec<(String, String, bool)>, Strin
     for r in rows {
         out.push(r.map_err(|e| format!("DB row: {e}"))?);
     }
+    tracing::info!("DB all_container_states: {} row(s): {:?}", out.len(), out);
     Ok(out)
 }
 
@@ -173,25 +178,30 @@ pub async fn set_assignment(
     source: &str,
     project: &str,
 ) -> Result<(), String> {
+    tracing::info!(
+        "DB set_assignment: device_id={device_id}, source={source}, project={project}"
+    );
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
 
     let project = if project == "none" { "" } else { project };
 
     if project.is_empty() {
-        conn.execute(
+        let rows = conn.execute(
             "DELETE FROM device_assignments WHERE device_id = ?1",
             params![device_id],
         )
         .map_err(|e| format!("DB delete assignment: {e}"))?;
+        tracing::info!("DB set_assignment: deleted {rows} row(s) for device {device_id}");
     } else {
-        conn.execute(
+        let rows = conn.execute(
             "INSERT INTO device_assignments (device_id, source, project)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(device_id) DO UPDATE SET source = excluded.source, project = excluded.project",
             params![device_id, source, project],
         )
         .map_err(|e| format!("DB set_assignment: {e}"))?;
+        tracing::info!("DB set_assignment: upserted {rows} row(s) for device {device_id} → project {project}");
     }
     Ok(())
 }
