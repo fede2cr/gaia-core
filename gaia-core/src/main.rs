@@ -114,6 +114,8 @@ async fn main() {
     let app = Router::new()
         // Camera-stream MJPEG proxy (must be before Leptos catch-all).
         .route("/api/camera-stream", get(proxy::camera_stream_handler))
+        // WASM hydration diagnostic endpoint (client pings this to confirm hydration).
+        .route("/api/hydrate-ping", get(|| async { "ok" }))
         // Reverse-proxy sub-router, mounted before the Leptos catch-all.
         .nest("/proxy", proxy_router)
         // Leptos SSR routes (also registers server function endpoints).
