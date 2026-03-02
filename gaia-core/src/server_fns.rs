@@ -66,9 +66,16 @@ pub async fn toggle_container(
     container_kind: String,
     enabled: bool,
 ) -> Result<Vec<ProjectTarget>, ServerFnError> {
+    tracing::info!(
+        "toggle_container: slug={slug}, kind={container_kind}, enabled={enabled}"
+    );
+
     crate::db::set_container_enabled(&slug, &container_kind, enabled)
         .await
-        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+        .map_err(|e| {
+            tracing::error!("toggle_container: DB write failed: {e}");
+            ServerFnError::<server_fn::error::NoCustomError>::ServerError(e)
+        })?;
 
     let name = crate::containers::container_name(&slug, &container_kind);
     if enabled {

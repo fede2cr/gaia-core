@@ -357,10 +357,15 @@ async fn remove(cmd: &str, name: &str) {
 /// This always pulls the latest image so that enabling a container from
 /// the dashboard also updates it.
 pub async fn start(name: &str) -> Result<(), String> {
+    tracing::info!("Container start requested for '{name}'");
+
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
-    let spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
+    let spec = spec_for(name).ok_or_else(|| {
+        tracing::error!("No container spec found for '{name}' — check containers.toml or built-in defaults");
+        format!("Unknown container: {name}")
+    })?;
 
     // 1. Pull the latest image.
     set_status(name, "pulling");

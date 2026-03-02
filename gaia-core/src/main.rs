@@ -35,11 +35,6 @@ async fn main() {
     gaia_core::db::init().await;
     gaia_core::db::migrate_legacy_json().await;
 
-    // ── Sync containers with persisted toggle state ─────────────────────
-    // Spawned in background so the web UI starts immediately.
-    // Container lifecycle statuses are tracked and polled by the dashboard.
-    tokio::spawn(gaia_core::containers::sync_with_db());
-
     // ── Proxy targets (with persisted container states) ──────────────────
     let mut targets = config::default_targets();
     if let Ok(states) = gaia_core::db::all_container_states().await {
@@ -93,9 +88,15 @@ async fn main() {
         .with_state(leptos_options);
 
     // ── Start server ─────────────────────────────────────────────────────
+    // Bind the TCP port first so the web UI is reachable immediately.
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!("Gaia Core listening on http://{addr}");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    // Port is open — now sync persisted container toggle states in the
+    // background.  Containers whose toggle was left "on" in a previous
+    // session will be (re-)started, those marked "off" will be stopped.
+    tokio::spawn(gaia_core::containers::sync_with_db());
+
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
