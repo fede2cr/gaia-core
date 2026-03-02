@@ -32,6 +32,37 @@ async fn main() {
     let addr = leptos_options.site_addr;
     let site_root = leptos_options.site_root.clone();
 
+    // ── Verify WASM bundle files ─────────────────────────────────────────
+    {
+        let pkg_dir = format!("{}/pkg", site_root);
+        let output = &leptos_options.output_name;
+        for ext in ["js", "wasm", "css"] {
+            let file = format!("{pkg_dir}/{output}.{ext}");
+            match std::fs::metadata(&file) {
+                Ok(m) => tracing::info!("pkg: {output}.{ext} ({} bytes)", m.len()),
+                Err(e) => tracing::warn!("pkg: {output}.{ext} MISSING — {e}"),
+            }
+        }
+        // Also check for _bg.wasm which wasm-bindgen may generate instead
+        let bg = format!("{pkg_dir}/{output}_bg.wasm");
+        if let Ok(m) = std::fs::metadata(&bg) {
+            tracing::info!("pkg: {output}_bg.wasm ({} bytes) — consider renaming to {output}.wasm", m.len());
+        }
+        // Compile-time output name (affects _bg suffix in HTML hydration scripts)
+        match std::option_env!("LEPTOS_OUTPUT_NAME") {
+            Some(n) => tracing::info!("LEPTOS_OUTPUT_NAME (compile-time) = {n:?} → HTML refs {n}.wasm"),
+            None => tracing::warn!("LEPTOS_OUTPUT_NAME not set at compile time → HTML refs {output}_bg.wasm"),
+        }
+        // List everything in the pkg dir for full visibility
+        if let Ok(entries) = std::fs::read_dir(&pkg_dir) {
+            let names: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            tracing::info!("pkg directory contents: {names:?}");
+        }
+    }
+
     // ── Database ─────────────────────────────────────────────────────────
     gaia_core::db::init().await;
     gaia_core::db::migrate_legacy_json().await;
