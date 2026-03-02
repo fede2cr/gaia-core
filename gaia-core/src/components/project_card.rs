@@ -105,7 +105,20 @@ pub fn ProjectCard(
                 let new_state = *new_state;
                 let kind = kind.to_string();
                 async move {
-                    let _ = toggle_container(slug, kind, new_state).await;
+                    leptos::logging::log!(
+                        "[toggle] calling server fn: slug={}, kind={}, enabled={}",
+                        &slug, &kind, new_state
+                    );
+                    match toggle_container(slug, kind, new_state).await {
+                        Ok(_) => {
+                            leptos::logging::log!("[toggle] server fn succeeded");
+                        }
+                        Err(e) => {
+                            leptos::logging::error!(
+                                "[toggle] server fn FAILED: {:?}", e
+                            );
+                        }
+                    }
                 }
             })
         }

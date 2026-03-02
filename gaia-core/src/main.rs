@@ -12,6 +12,7 @@ async fn main() {
     use leptos::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use tower_http::services::ServeDir;
+    use tower_http::trace::TraceLayer;
 
     use gaia_core::app::App;
     use gaia_core::config;
@@ -65,6 +66,13 @@ async fn main() {
     // ── Leptos routes ────────────────────────────────────────────────────
     let routes = generate_route_list(App);
 
+    // Log registered server functions so we can verify they're available.
+    let sf_count = server_fn::axum::server_fn_paths().count();
+    tracing::info!("Registered {sf_count} server function(s)");
+    for (path, method) in server_fn::axum::server_fn_paths() {
+        tracing::info!("  server_fn: {method} {path}");
+    }
+
     // Build a self-contained sub-router for proxy routes.  Calling
     // .with_state() here converts Router<ProxyState> → Router<()> so it
     // can be nested inside the main router that carries LeptosOptions.
@@ -77,12 +85,18 @@ async fn main() {
         .route("/api/camera-stream", get(proxy::camera_stream_handler))
         // Reverse-proxy sub-router, mounted before the Leptos catch-all.
         .nest("/proxy", proxy_router)
-        // Leptos SSR routes.
+        // Leptos SSR routes (also registers server function endpoints).
         .leptos_routes(&leptos_options, routes, App)
         // Serve compiled WASM bundle, CSS, and static assets.
         .nest_service(
             "/pkg",
             ServeDir::new(format!("{}/pkg", site_root.to_string())),
+        )
+        // Log all HTTP requests for diagnostics.
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO))
         )
         .fallback(fallback_handler)
         .with_state(leptos_options);
