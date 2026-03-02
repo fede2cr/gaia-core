@@ -71,6 +71,11 @@ env   = ["STREAM_PORT=8181"]
 image   = "docker.io/fede2/gaia-gmn-capture"
 volumes = ["gaia-gmn-data:/data"]
 
+[gaia-gmn-web]
+image   = "docker.io/fede2/gaia-gmn-web"
+env     = ["LEPTOS_SITE_ADDR=0.0.0.0:8180"]
+volumes = ["gaia-gmn-data:/data"]
+
 [rms]
 image   = "docker.io/fede2/rms"
 volumes = ["rms-data:/home/rms/RMS_data"]

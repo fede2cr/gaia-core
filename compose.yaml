@@ -113,6 +113,26 @@ services:
       - STREAM_PORT=8181
     restart: unless-stopped
 
+  gaia-gmn-capture:
+    image: docker.io/fede2/gaia-gmn-capture
+    container_name: gaia-gmn-capture
+    profiles: ["managed"]
+    network_mode: host
+    volumes:
+      - gaia-gmn-data:/data
+    restart: unless-stopped
+
+  gaia-gmn-web:
+    image: docker.io/fede2/gaia-gmn-web
+    container_name: gaia-gmn-web
+    profiles: ["managed"]
+    network_mode: host
+    environment:
+      - LEPTOS_SITE_ADDR=0.0.0.0:8180
+    volumes:
+      - gaia-gmn-data:/data
+    restart: unless-stopped
+
   rms:
     image: docker.io/fede2/rms
     container_name: rms
@@ -125,6 +145,7 @@ services:
 volumes:
   gaia-core-data:
   gaia-audio-data:
+  gaia-gmn-data:
   readsb-json:
   co2-state:
   rms-data:

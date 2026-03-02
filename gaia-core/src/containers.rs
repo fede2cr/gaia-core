@@ -241,6 +241,13 @@ fn builtin_config() -> ContainerConfig {
         ..Default::default()
     });
 
+    m.insert("gaia-gmn-web".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-gmn-web".into(),
+        env: vec!["LEPTOS_SITE_ADDR=0.0.0.0:8180".into()],
+        volumes: vec!["gaia-gmn-data:/data".into()],
+        ..Default::default()
+    });
+
     m.insert("rms".into(), ContainerSpec {
         image: "docker.io/fede2/rms".into(),
         volumes: vec!["rms-data:/home/rms/RMS_data".into()],
