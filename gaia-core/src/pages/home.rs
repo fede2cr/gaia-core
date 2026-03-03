@@ -13,17 +13,25 @@ pub fn Home() -> impl IntoView {
     let targets = create_resource(|| (), |_| get_projects());
 
     // ── Container lifecycle status polling ────────────────────────────
+    // Use create_local_resource so refetches do NOT trigger <Suspense>
+    // fallbacks (avoids the 3-second blink).
     let (poll_tick, set_poll_tick) = create_signal(0_u32);
-    let status_resource = create_resource(move || poll_tick.get(), |_| get_container_statuses());
+    let status_resource =
+        create_local_resource(move || poll_tick.get(), |_| get_container_statuses());
 
-    // Flatten the resource into a simple signal for child components.
-    let status_list: Signal<Vec<(String, String)>> = Signal::derive(move || {
-        status_resource
+    // Only propagate to children when the data actually changes.
+    let (status_list, set_status_list) = create_signal(Vec::<(String, String)>::new());
+    create_effect(move |prev: Option<Vec<(String, String)>>| {
+        let new = status_resource
             .get()
             .and_then(|r| r.ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if prev.as_ref() != Some(&new) {
+            set_status_list.set(new.clone());
+        }
+        new
     });
-    provide_context(status_list);
+    provide_context(Signal::derive(move || status_list.get()));
 
     // Poll every 3 s – only in the browser (set_interval is a wasm-bindgen API).
     #[cfg(feature = "hydrate")]
