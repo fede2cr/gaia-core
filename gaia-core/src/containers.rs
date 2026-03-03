@@ -415,6 +415,9 @@ pub async fn start(name: &str) -> Result<(), String> {
     if name == "gaia-audio-capture" {
         build_audio_capture_args(&mut args).await;
     }
+    if name == "gaia-audio-processing" {
+        build_audio_processing_args(&mut args).await;
+    }
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
     }
@@ -475,6 +478,31 @@ async fn build_audio_capture_args(args: &mut Vec<String>) {
             "gaia-audio-capture: no microphone assigned to project 'audio' — \
              container will try ALSA default (may fail)"
         );
+    }
+}
+
+/// Inject the station latitude/longitude into the processing container
+/// so BirdNET can filter species by geographic range.
+///
+/// Reads the values saved via the Settings → Station Location form.
+async fn build_audio_processing_args(args: &mut Vec<String>) {
+    let lat = crate::db::get_setting("latitude").await.ok().flatten();
+    let lon = crate::db::get_setting("longitude").await.ok().flatten();
+
+    match (lat, lon) {
+        (Some(la), Some(lo)) if !la.is_empty() && !lo.is_empty() => {
+            tracing::info!("gaia-audio-processing: LATITUDE={la}, LONGITUDE={lo}");
+            args.push("-e".into());
+            args.push(format!("LATITUDE={la}"));
+            args.push("-e".into());
+            args.push(format!("LONGITUDE={lo}"));
+        }
+        _ => {
+            tracing::warn!(
+                "gaia-audio-processing: no station location configured — \
+                 model will not filter by geographic range"
+            );
+        }
     }
 }
 
