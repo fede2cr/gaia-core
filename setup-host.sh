@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
 # Gaia - Host setup script
 #
 # Applies host-level configuration required by Gaia containers that cannot
@@ -8,7 +7,6 @@
 #
 # Usage:
 #   sudo bash setup-host.sh
-# ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,13 +21,13 @@ fi
 info() { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 
-# ── Root check ───────────────────────────────────────────────────────────────
+# Root check
 if [[ $EUID -ne 0 ]]; then
   warn "This script must be run as root (sudo)."
   exit 1
 fi
 
-# ── V4L2 camera udev rule ───────────────────────────────────────────────────
+# V4L2 camera udev rule
 UDEV_SRC="${SCRIPT_DIR}/host/udev/99-gaia-video.rules"
 UDEV_DST="/etc/udev/rules.d/99-gaia-video.rules"
 
@@ -43,5 +41,4 @@ else
   info "Video devices (/dev/video*) are now world-accessible (mode 0666)."
 fi
 
-# ── Done ─────────────────────────────────────────────────────────────────────
 info "Host setup complete."

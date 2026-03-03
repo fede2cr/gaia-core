@@ -40,7 +40,9 @@ rusqlite            = { version = "0.31", features = ["bundled"], optional = tru
 toml                = { version = "0.8", optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
-wasm-bindgen              = { version = "0.2", optional = true }
+# Pin wasm-bindgen to the EXACT version so it matches the CLI installed
+# in the Containerfile.  A mismatch causes a LinkError at runtime.
+wasm-bindgen              = { version = "=0.2.113", optional = true }
 console_error_panic_hook  = { version = "0.1", optional = true }
 
 [features]
