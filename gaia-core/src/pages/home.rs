@@ -25,13 +25,19 @@ pub fn Home() -> impl IntoView {
     });
     provide_context(status_list);
 
-    // Poll every 3 s (only runs in the browser after hydration).
-    set_interval(
-        move || {
-            set_poll_tick.update(|n| *n = n.wrapping_add(1));
-        },
-        std::time::Duration::from_secs(3),
-    );
+    // Poll every 3 s – only in the browser (set_interval is a wasm-bindgen API).
+    #[cfg(feature = "hydrate")]
+    {
+        set_interval(
+            move || {
+                set_poll_tick.update(|n| *n = n.wrapping_add(1));
+            },
+            std::time::Duration::from_secs(3),
+        );
+    }
+    // Suppress unused-variable warning on the server build.
+    #[cfg(not(feature = "hydrate"))]
+    let _ = set_poll_tick;
 
     view! {
         <section class="dashboard">
