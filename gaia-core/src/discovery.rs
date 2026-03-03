@@ -51,7 +51,7 @@ const SERVICE_TYPES: &[(&str, &str)] = &[
 
 /// Instance name prefixes → Gaia project slug mapping.
 /// This catches services even if they use an unexpected service type
-/// (e.g. BirdNET-Pi advertising as `_http._tcp` / `"Web Site"`).
+/// (e.g. a Gaia node advertising as `_http._tcp` / `"Web Site"`).
 const INSTANCE_PREFIXES: &[(&str, &str)] = &[
     // gaia-radio
     ("gaia-radio-", "radio"),
@@ -59,9 +59,6 @@ const INSTANCE_PREFIXES: &[(&str, &str)] = &[
     ("gaia-audio-", "audio"),
     ("capture-", "audio"),
     ("processing-", "audio"),
-    ("web-", "audio"),
-    // BirdNET instances (detected as gaia-audio capture sources)
-    ("birdnet", "audio"),
     // GMN / RMS
     ("gaia-gmn-", "gmn"),
     ("rms-", "gmn"),
