@@ -28,17 +28,36 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # V4L2 camera udev rule
-UDEV_SRC="${SCRIPT_DIR}/host/udev/99-gaia-video.rules"
-UDEV_DST="/etc/udev/rules.d/99-gaia-video.rules"
+UDEV_VIDEO_SRC="${SCRIPT_DIR}/host/udev/99-gaia-video.rules"
+UDEV_VIDEO_DST="/etc/udev/rules.d/99-gaia-video.rules"
 
-if [[ -f "$UDEV_DST" ]] && cmp -s "$UDEV_SRC" "$UDEV_DST"; then
-  info "udev rule already installed and up to date."
+if [[ -f "$UDEV_VIDEO_DST" ]] && cmp -s "$UDEV_VIDEO_SRC" "$UDEV_VIDEO_DST"; then
+  info "Video udev rule already installed and up to date."
 else
-  cp "$UDEV_SRC" "$UDEV_DST"
+  cp "$UDEV_VIDEO_SRC" "$UDEV_VIDEO_DST"
+  UDEV_CHANGED=1
+  info "Installed udev rule: $UDEV_VIDEO_DST"
+  info "Video devices (/dev/video*) are now world-accessible (mode 0666)."
+fi
+
+# ALSA audio udev rule
+UDEV_AUDIO_SRC="${SCRIPT_DIR}/host/udev/99-gaia-audio.rules"
+UDEV_AUDIO_DST="/etc/udev/rules.d/99-gaia-audio.rules"
+
+if [[ -f "$UDEV_AUDIO_DST" ]] && cmp -s "$UDEV_AUDIO_SRC" "$UDEV_AUDIO_DST"; then
+  info "Audio udev rule already installed and up to date."
+else
+  cp "$UDEV_AUDIO_SRC" "$UDEV_AUDIO_DST"
+  UDEV_CHANGED=1
+  info "Installed udev rule: $UDEV_AUDIO_DST"
+  info "Audio devices (/dev/snd/*) are now world-accessible (mode 0666)."
+fi
+
+# Reload udev if any rules changed
+if [[ "${UDEV_CHANGED:-0}" -eq 1 ]]; then
   udevadm control --reload-rules
   udevadm trigger
-  info "Installed udev rule: $UDEV_DST"
-  info "Video devices (/dev/video*) are now world-accessible (mode 0666)."
+  info "udev rules reloaded."
 fi
 
 info "Host setup complete."

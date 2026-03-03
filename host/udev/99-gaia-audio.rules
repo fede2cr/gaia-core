@@ -1,0 +1,17 @@
+# Gaia – allow rootless containers to access ALSA audio devices.
+#
+# Rootless Podman cannot pass /dev/snd/* into containers because the
+# device nodes are owned by root:audio on the host.  Inside the
+# container's user namespace those GIDs map to nobody:nogroup and the
+# files have no "other" permission bits, so even container-root is
+# denied access.
+#
+# Making the device nodes world-accessible (mode 0666) is the simplest
+# reliable workaround — identical to what we do for video devices.
+#
+# Install:
+#   sudo cp 99-gaia-audio.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+SUBSYSTEM=="sound", MODE="0666"
