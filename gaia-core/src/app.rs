@@ -19,7 +19,6 @@ pub fn App() -> impl IntoView {
         <Title text="Gaia - Central Dashboard"/>
         <Meta name="viewport" content="width=device-width, initial-scale=1"/>
         <Meta name="description" content="Gaia central dashboard for managing and monitoring all Gaia sub-projects"/>
-        <Script src="/diag.js"/>
 
         <Router>
             <Nav/>

@@ -66,16 +66,9 @@ pub async fn toggle_container(
     container_kind: String,
     enabled: bool,
 ) -> Result<Vec<ProjectTarget>, ServerFnError> {
-    tracing::info!(
-        "toggle_container: slug={slug}, kind={container_kind}, enabled={enabled}"
-    );
-
     crate::db::set_container_enabled(&slug, &container_kind, enabled)
         .await
-        .map_err(|e| {
-            tracing::error!("toggle_container: DB write failed: {e}");
-            ServerFnError::<server_fn::error::NoCustomError>::ServerError(e)
-        })?;
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
 
     let name = crate::containers::container_name(&slug, &container_kind);
     if enabled {
@@ -227,16 +220,9 @@ pub async fn assign_device(
     source: String,
     project: String,
 ) -> Result<Vec<DeviceAssignment>, ServerFnError> {
-    tracing::info!(
-        "assign_device: device_id={device_id}, source={source}, project={project}"
-    );
     crate::db::set_assignment(&device_id, &source, &project)
         .await
-        .map_err(|e| {
-            tracing::error!("assign_device: DB write failed: {e}");
-            ServerFnError::<server_fn::error::NoCustomError>::ServerError(e)
-        })?;
-    tracing::info!("assign_device: persisted OK");
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
     get_assignments().await
 }
 

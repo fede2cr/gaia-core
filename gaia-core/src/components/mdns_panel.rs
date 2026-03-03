@@ -86,14 +86,7 @@ fn NodeRow(
         let dev_id = dev_id.clone();
         let project = project.clone();
         async move {
-            leptos::logging::log!(
-                "[mdns] assigning remote node={} to project={}",
-                &dev_id, &project
-            );
-            match assign_device(dev_id, "remote".to_string(), project).await {
-                Ok(_) => leptos::logging::log!("[mdns] assignment succeeded"),
-                Err(e) => leptos::logging::error!("[mdns] assignment FAILED: {:?}", e),
-            }
+            let _ = assign_device(dev_id, "remote".to_string(), project).await;
         }
     });
 
@@ -117,10 +110,6 @@ fn NodeRow(
                 class="device-select"
                 on:change=move |ev| {
                     let val = event_target_value(&ev);
-                    leptos::logging::log!(
-                        "[mdns] select changed: node={}, value={}",
-                        &instance, &val
-                    );
                     set_selected.set(val.clone());
                     assign_action.dispatch((instance.clone(), val));
                 }

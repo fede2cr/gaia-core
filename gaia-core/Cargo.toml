@@ -27,7 +27,7 @@ leptos_axum         = { version = "0.6", optional = true }
 axum                = { version = "0.7", optional = true }
 tokio               = { version = "1", features = ["full"], optional = true }
 tower               = { version = "0.4", optional = true }
-tower-http          = { version = "0.5", features = ["fs", "cors", "trace"], optional = true }
+tower-http          = { version = "0.5", features = ["fs", "cors"], optional = true }
 tracing             = { version = "0.1", optional = true }
 tracing-subscriber  = { version = "0.3", features = ["env-filter"], optional = true }
 reqwest             = { version = "0.12", features = ["json", "stream"], optional = true }
@@ -40,9 +40,7 @@ rusqlite            = { version = "0.31", features = ["bundled"], optional = tru
 toml                = { version = "0.8", optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
-# Pin wasm-bindgen to the EXACT version so it matches the CLI installed
-# in the Containerfile.  A mismatch causes a LinkError at runtime.
-wasm-bindgen              = { version = "=0.2.113", optional = true }
+wasm-bindgen              = { version = "0.2", optional = true }
 console_error_panic_hook  = { version = "0.1", optional = true }
 
 [features]

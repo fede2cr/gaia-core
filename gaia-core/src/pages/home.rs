@@ -26,14 +26,12 @@ pub fn Home() -> impl IntoView {
     provide_context(status_list);
 
     // Poll every 3 s (only runs in the browser after hydration).
-    create_effect(move |_| {
-        set_interval(
-            move || {
-                set_poll_tick.update(|n| *n = n.wrapping_add(1));
-            },
-            std::time::Duration::from_secs(3),
-        );
-    });
+    set_interval(
+        move || {
+            set_poll_tick.update(|n| *n = n.wrapping_add(1));
+        },
+        std::time::Duration::from_secs(3),
+    );
 
     view! {
         <section class="dashboard">

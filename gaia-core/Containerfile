@@ -1,13 +1,9 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────
 FROM docker.io/library/rust:1-trixie AS builder
 
-# Install wasm target + cargo-leptos + matching wasm-bindgen-cli.
-# The wasm-bindgen-cli version MUST match the wasm-bindgen library in
-# Cargo.lock; a version mismatch causes a LinkError at runtime because
-# the JS glue and WASM binary disagree on import function hashes.
+# Install wasm target + cargo-leptos
 RUN rustup target add wasm32-unknown-unknown \
-    && cargo install cargo-leptos \
-    && cargo install wasm-bindgen-cli@0.2.113
+    && cargo install cargo-leptos
 
 WORKDIR /build
 COPY . .

@@ -90,14 +90,7 @@ fn DeviceRow(
         let dev_id = dev_id.clone();
         let project = project.clone();
         async move {
-            leptos::logging::log!(
-                "[device] assigning local device={} to project={}",
-                &dev_id, &project
-            );
-            match assign_device(dev_id, "local".to_string(), project).await {
-                Ok(_) => leptos::logging::log!("[device] assignment succeeded"),
-                Err(e) => leptos::logging::error!("[device] assignment FAILED: {:?}", e),
-            }
+            let _ = assign_device(dev_id, "local".to_string(), project).await;
         }
     });
 
@@ -121,10 +114,6 @@ fn DeviceRow(
                 class="device-select"
                 on:change=move |ev| {
                     let val = event_target_value(&ev);
-                    leptos::logging::log!(
-                        "[device] select changed: device={}, value={}",
-                        &device_id, &val
-                    );
                     set_selected.set(val.clone());
                     assign_action.dispatch((device_id.clone(), val));
                 }
