@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export the device / node types so the UI can use them.
 pub use crate::config::ProjectTarget;
+pub use crate::config::AudioProcessingNode;
 
 /// A hardware device detected on the local host.
 /// (Mirrors `hardware::HwDevice` but is always compiled for both targets.)
@@ -109,17 +110,69 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
 
-    for (slug, kind, enabled) in states {
-        if let Some(t) = targets.iter_mut().find(|t| t.slug == slug) {
+    for (slug, kind, enabled) in &states {
+        if let Some(t) = targets.iter_mut().find(|t| t.slug == *slug) {
             match kind.as_str() {
-                "capture" => t.capture_enabled = enabled,
-                "processing" => t.processing_enabled = enabled,
-                "web" => t.web_enabled = enabled,
-                "config" => t.config_enabled = enabled,
-                _ => {}
+                "capture" => t.capture_enabled = *enabled,
+                "web" => t.web_enabled = *enabled,
+                "config" => t.config_enabled = *enabled,
+                _ => {
+                    // "processing" or "processing:{model}" — handled below
+                    // for the audio project, and as a simple flag for others.
+                    if !kind.starts_with("processing") {
+                        continue;
+                    }
+                    if slug != "audio" {
+                        t.processing_enabled = *enabled;
+                    }
+                }
             }
         }
     }
+
+    // Build per-model processing nodes for the audio project.
+    if let Some(audio) = targets.iter_mut().find(|t| t.slug == "audio") {
+        let models = crate::config::default_audio_models();
+        let model_states = crate::db::all_audio_model_states()
+            .await
+            .unwrap_or_default();
+
+        for model in &models {
+            // Only show models that are enabled in Settings.
+            let model_enabled = model_states
+                .iter()
+                .find(|(s, _)| s == &model.slug)
+                .map(|(_, e)| *e)
+                .unwrap_or(model.enabled);
+
+            if !model_enabled {
+                continue;
+            }
+
+            // Check if this model's processing container is toggled on.
+            let container_running = states
+                .iter()
+                .find(|(s, k, _)| s == "audio" && *k == model.container_kind)
+                .map(|(_, _, e)| *e)
+                .unwrap_or(false);
+
+            audio.processing_models.push(
+                crate::config::AudioProcessingNode {
+                    model_slug: model.slug.clone(),
+                    model_name: model.name.clone(),
+                    container_kind: model.container_kind.clone(),
+                    running: container_running,
+                },
+            );
+        }
+
+        // processing_enabled is true if ANY model node is running.
+        audio.processing_enabled = audio
+            .processing_models
+            .iter()
+            .any(|n| n.running);
+    }
+
     Ok(targets)
 }
 
@@ -289,4 +342,155 @@ pub async fn set_gmn_callsign(callsign: String) -> Result<String, ServerFnError>
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
     tracing::info!("GMN callsign set to: {trimmed}");
     Ok(trimmed)
+}
+
+// ── Audio model management ───────────────────────────────────────────────
+
+/// An audio model with its current enabled state (shared type for SSR + WASM).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioModelInfo {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+}
+
+/// Return all known audio models with their persisted enabled state.
+#[server(GetAudioModels, "/api")]
+pub async fn get_audio_models() -> Result<Vec<AudioModelInfo>, ServerFnError> {
+    let models = crate::config::default_audio_models();
+    let db_states = crate::db::all_audio_model_states()
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    Ok(models
+        .into_iter()
+        .map(|m| {
+            let enabled = db_states
+                .iter()
+                .find(|(s, _)| s == &m.slug)
+                .map(|(_, e)| *e)
+                .unwrap_or(m.enabled);
+            AudioModelInfo {
+                slug: m.slug,
+                name: m.name,
+                description: m.description,
+                enabled,
+            }
+        })
+        .collect())
+}
+
+/// Enable or disable an audio model in Settings.
+///
+/// When a model is disabled, its processing container is also stopped.
+#[server(ToggleAudioModel, "/api")]
+pub async fn toggle_audio_model(
+    slug: String,
+    enabled: bool,
+) -> Result<Vec<AudioModelInfo>, ServerFnError> {
+    crate::db::set_audio_model_enabled(&slug, enabled)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    if !enabled {
+        // Stop the processing container for this model.
+        let kind = crate::config::model_container_kind(&slug);
+        let name = crate::containers::container_name("audio", &kind);
+        crate::db::set_container_enabled("audio", &kind, false)
+            .await
+            .ok();
+        let _ = crate::containers::stop(&name).await;
+        tracing::info!("Disabled audio model '{slug}' and stopped container '{name}'");
+    } else {
+        tracing::info!("Enabled audio model '{slug}'");
+    }
+
+    get_audio_models().await
+}
+
+/// Toggle a specific audio processing-model container (start / stop).
+///
+/// Called from the project card per-model processing toggles.
+#[server(ToggleAudioProcessing, "/api")]
+pub async fn toggle_audio_processing(
+    model_slug: String,
+    enabled: bool,
+) -> Result<Vec<ProjectTarget>, ServerFnError> {
+    let kind = crate::config::model_container_kind(&model_slug);
+    crate::db::set_container_enabled("audio", &kind, enabled)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    let name = crate::containers::container_name("audio", &kind);
+    if enabled {
+        let name_bg = name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::containers::start(&name_bg).await {
+                tracing::error!("Background start of '{name_bg}' failed: {e}");
+            }
+        });
+    } else {
+        let _ = crate::containers::stop(&name).await;
+    }
+
+    tracing::info!(
+        "Audio processing model '{model_slug}' {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+
+    get_projects().await
+}
+
+/// Return the number of currently-active audio processing nodes.
+#[server(GetActiveProcessingNodeCount, "/api")]
+pub async fn get_active_processing_node_count() -> Result<usize, ServerFnError> {
+    crate::db::active_audio_model_count()
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+// ── Recording analysis tracking ──────────────────────────────────────────
+
+/// Register a new recording for analysis by all currently-enabled models.
+///
+/// Returns the number of models that need to analyse it.
+#[server(RegisterRecording, "/api")]
+pub async fn register_recording(recording: String) -> Result<usize, ServerFnError> {
+    crate::db::register_recording(&recording)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+/// Mark a recording as analysed by a specific model.
+#[server(MarkRecordingAnalyzed, "/api")]
+pub async fn mark_recording_analyzed(
+    recording: String,
+    model_slug: String,
+) -> Result<bool, ServerFnError> {
+    crate::db::mark_recording_analyzed(&recording, &model_slug)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    // Return whether the recording is now fully analysed.
+    crate::db::is_recording_fully_analyzed(&recording)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+/// Return the list of recordings that have been fully analysed by all
+/// models and can safely be deleted.
+#[server(FullyAnalyzedRecordings, "/api")]
+pub async fn fully_analyzed_recordings() -> Result<Vec<String>, ServerFnError> {
+    crate::db::fully_analyzed_recordings()
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+/// Remove tracking rows for a recording after the file has been deleted.
+#[server(RemoveRecordingTracking, "/api")]
+pub async fn remove_recording_tracking(recording: String) -> Result<(), ServerFnError> {
+    crate::db::remove_recording_tracking(&recording)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
 }

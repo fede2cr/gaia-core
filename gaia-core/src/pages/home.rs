@@ -73,6 +73,7 @@ pub fn Home() -> impl IntoView {
                                             initial_capture=t.capture_enabled
                                             initial_processing=t.processing_enabled
                                             initial_web=t.web_enabled
+                                            processing_models=t.processing_models
                                         />
                                     }
                                 }).collect_view()}

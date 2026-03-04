@@ -171,8 +171,19 @@ fn config() -> &'static ContainerConfig {
 }
 
 /// Look up a container spec by name.
+///
+/// For audio processing model containers (`gaia-audio-processing-{slug}`),
+/// falls back to the base `gaia-audio-processing` spec since all models
+/// use the same image and volume layout.
 fn spec_for(container_name: &str) -> Option<ContainerSpec> {
-    config().containers.get(container_name).cloned()
+    if let Some(spec) = config().containers.get(container_name) {
+        return Some(spec.clone());
+    }
+    // Fallback for model-specific audio processing containers.
+    if container_name.starts_with("gaia-audio-processing-") {
+        return config().containers.get("gaia-audio-processing").cloned();
+    }
+    None
 }
 
 /// Hard-coded defaults so gaia-core works out of the box without a config file.
@@ -290,15 +301,26 @@ pub fn all_statuses() -> Vec<(String, String)> {
 ///
 /// Convention:  `gaia-{slug}-{kind}`
 ///
+/// For audio processing models, the `kind` may be `"processing:{model}"`
+/// which maps to `"gaia-audio-processing-{model}"`, except for the
+/// default BirdNET model where `"processing"` maps to the legacy name
+/// `"gaia-audio-processing"`.
+///
 /// Examples
 /// --------
-/// - `("audio", "capture")` → `"gaia-audio-capture"`
-/// - `("radio", "web")`     → `"gaia-radio-web"`
+/// - `("audio", "capture")`           → `"gaia-audio-capture"`
+/// - `("audio", "processing")`        → `"gaia-audio-processing"` (BirdNET)
+/// - `("audio", "processing:perch")`  → `"gaia-audio-processing-perch"`
+/// - `("radio", "web")`               → `"gaia-radio-web"`
 pub fn container_name(slug: &str, kind: &str) -> String {
     // Legacy: the monolithic RMS container is still used for "processing"
     // until the processing pipeline is extracted.
     if slug == "gmn" && kind == "processing" {
         return "rms".into();
+    }
+    // Audio processing model containers: "processing:perch" → "gaia-audio-processing-perch"
+    if let Some(model_slug) = kind.strip_prefix("processing:") {
+        return format!("gaia-{slug}-processing-{model_slug}");
     }
     format!("gaia-{slug}-{kind}")
 }
@@ -415,8 +437,16 @@ pub async fn start(name: &str) -> Result<(), String> {
     if name == "gaia-audio-capture" {
         build_audio_capture_args(&mut args).await;
     }
-    if name == "gaia-audio-processing" {
-        build_audio_processing_args(&mut args).await;
+    if name.starts_with("gaia-audio-processing") {
+        // Derive the model slug from the container name.
+        let model_slug = if name == "gaia-audio-processing" {
+            "birdnet".to_string()
+        } else {
+            name.strip_prefix("gaia-audio-processing-")
+                .unwrap_or("birdnet")
+                .to_string()
+        };
+        build_audio_processing_args(&mut args, &model_slug).await;
     }
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
@@ -481,17 +511,20 @@ async fn build_audio_capture_args(args: &mut Vec<String>) {
     }
 }
 
-/// Inject the station latitude/longitude into the processing container
-/// so BirdNET can filter species by geographic range.
+/// Inject the station latitude/longitude and model information into
+/// the processing container so the model can filter species by
+/// geographic range and identify which model to run.
 ///
-/// Reads the values saved via the Settings → Station Location form.
-async fn build_audio_processing_args(args: &mut Vec<String>) {
+/// Also passes `PROCESSING_NODE_COUNT` so the container knows how many
+/// sibling processing nodes exist (used for recording lifecycle: a
+/// recording is only deleted when all nodes have analysed it).
+async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
     let lat = crate::db::get_setting("latitude").await.ok().flatten();
     let lon = crate::db::get_setting("longitude").await.ok().flatten();
 
     match (lat, lon) {
         (Some(la), Some(lo)) if !la.is_empty() && !lo.is_empty() => {
-            tracing::info!("gaia-audio-processing: LATITUDE={la}, LONGITUDE={lo}");
+            tracing::info!("gaia-audio-processing ({model_slug}): LATITUDE={la}, LONGITUDE={lo}");
             args.push("-e".into());
             args.push(format!("LATITUDE={la}"));
             args.push("-e".into());
@@ -499,11 +532,22 @@ async fn build_audio_processing_args(args: &mut Vec<String>) {
         }
         _ => {
             tracing::warn!(
-                "gaia-audio-processing: no station location configured — \
+                "gaia-audio-processing ({model_slug}): no station location configured — \
                  model will not filter by geographic range"
             );
         }
     }
+
+    // Tell the container which model to run.
+    args.push("-e".into());
+    args.push(format!("MODEL_SLUG={model_slug}"));
+
+    // Tell the container how many processing peers exist.
+    let node_count = crate::db::active_audio_model_count()
+        .await
+        .unwrap_or(1);
+    args.push("-e".into());
+    args.push(format!("PROCESSING_NODE_COUNT={node_count}"));
 }
 
 /// Discover and bind-mount every `/dev/video*` node from the host.

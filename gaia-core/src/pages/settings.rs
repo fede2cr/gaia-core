@@ -4,7 +4,10 @@ use leptos::*;
 
 use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
-use crate::server_fns::{get_location, get_projects, set_location};
+use crate::components::toggle::ToggleSwitch;
+use crate::server_fns::{
+    get_audio_models, get_location, get_projects, set_location, toggle_audio_model,
+};
 
 /// Settings page showing current proxy configuration, port assignments,
 /// detected hardware and remote nodes.
@@ -128,6 +131,15 @@ pub fn SettingsPage() -> impl IntoView {
             </p>
             <LocationForm/>
 
+            // ── Audio Models ─────────────────────────────────────────
+            <h2>"Audio Models"</h2>
+            <p class="page-description">
+                "Enable bioacoustic models to make them available as audio processing nodes. "
+                "Each enabled model can run as a separate processing container, sharing "
+                "captured recordings and only deleting files once all models have analysed them."
+            </p>
+            <AudioModelSettings/>
+
             // ── Hardware & Network Discovery ────────────────────────
             <h2>"Hardware & Network"</h2>
             <DeviceList/>
@@ -214,6 +226,76 @@ fn LocationForm() -> impl IntoView {
                     view! { <p class=cls>{msg}</p> }
                 })}
             </form>
+        </Suspense>
+    }
+}
+
+/// Audio model toggles for the Settings page.
+#[component]
+fn AudioModelSettings() -> impl IntoView {
+    let models = create_resource(|| (), |_| get_audio_models());
+    let (model_list, set_model_list) = create_signal(Vec::<crate::server_fns::AudioModelInfo>::new());
+
+    // Populate local state when the resource loads.
+    create_effect(move |_| {
+        if let Some(Ok(ms)) = models.get() {
+            set_model_list.set(ms);
+        }
+    });
+
+    view! {
+        <Suspense fallback=move || view! { <p class="loading">"Loading models..."</p> }>
+            <div class="audio-models-list">
+                <For
+                    each=move || model_list.get()
+                    key=|m| m.slug.clone()
+                    children=move |model| {
+                        let slug = model.slug.clone();
+                        let name = model.name.clone();
+                        let description = model.description.clone();
+
+                        let (enabled, set_enabled) = create_signal(model.enabled);
+                        let toggle_action = {
+                            let slug = slug.clone();
+                            create_action(move |new_state: &bool| {
+                                let slug = slug.clone();
+                                let new_state = *new_state;
+                                async move {
+                                    let _ = toggle_audio_model(slug, new_state).await;
+                                }
+                            })
+                        };
+
+                        let on_toggle = Callback::new(move |val: bool| {
+                            set_enabled.set(val);
+                            toggle_action.dispatch(val);
+                        });
+
+                        view! {
+                            <div class="audio-model-row">
+                                <div class="audio-model-info">
+                                    <span class="audio-model-name">{name}</span>
+                                    <span class="audio-model-description">{description}</span>
+                                </div>
+                                <ToggleSwitch
+                                    label=slug
+                                    checked=enabled
+                                    on_toggle=on_toggle
+                                />
+                            </div>
+                        }
+                    }
+                />
+                {move || {
+                    if model_list.get().is_empty() {
+                        Some(view! {
+                            <p class="empty-state">"No audio models configured."</p>
+                        })
+                    } else {
+                        None
+                    }
+                }}
+            </div>
         </Suspense>
     }
 }

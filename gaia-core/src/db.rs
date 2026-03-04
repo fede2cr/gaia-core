@@ -51,6 +51,18 @@ pub async fn init() {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
         );
+
+        CREATE TABLE IF NOT EXISTS audio_models (
+            slug    TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS recording_analysis (
+            recording  TEXT NOT NULL,
+            model_slug TEXT NOT NULL,
+            completed  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (recording, model_slug)
+        );
         ",
     )
     .expect("failed to run DB migrations");
@@ -221,6 +233,167 @@ pub async fn set_setting(key: &str, value: &str) -> Result<(), String> {
         params![key, value],
     )
     .map_err(|e| format!("DB set_setting: {e}"))?;
+    Ok(())
+}
+
+// ── Audio model state ─────────────────────────────────────────────────────
+
+/// Persist the enabled state of an audio model.
+pub async fn set_audio_model_enabled(slug: &str, enabled: bool) -> Result<(), String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    conn.execute(
+        "INSERT INTO audio_models (slug, enabled)
+         VALUES (?1, ?2)
+         ON CONFLICT(slug) DO UPDATE SET enabled = excluded.enabled",
+        params![slug, enabled as i32],
+    )
+    .map_err(|e| format!("DB set_audio_model_enabled: {e}"))?;
+    Ok(())
+}
+
+/// Load the enabled state for an audio model.
+/// Returns `None` if the slug has never been persisted.
+pub async fn get_audio_model_enabled(slug: &str) -> Result<Option<bool>, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT enabled FROM audio_models WHERE slug = ?1")
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let result: Option<i32> = stmt
+        .query_row(params![slug], |row| row.get(0))
+        .ok();
+    Ok(result.map(|v| v != 0))
+}
+
+/// Load all audio model enabled states.
+pub async fn all_audio_model_states() -> Result<Vec<(String, bool)>, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT slug, enabled FROM audio_models")
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i32>(1)? != 0,
+            ))
+        })
+        .map_err(|e| format!("DB query: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// Count how many audio models are currently enabled.
+pub async fn active_audio_model_count() -> Result<usize, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audio_models WHERE enabled = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("DB count audio models: {e}"))?;
+    Ok(count as usize)
+}
+
+// ── Recording analysis tracking ──────────────────────────────────────────
+
+/// Register a recording for analysis by all currently-enabled models.
+///
+/// Called when a new recording is captured.  Creates one row per enabled
+/// model so each processing node knows it needs to analyse the file.
+pub async fn register_recording(recording: &str) -> Result<usize, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT slug FROM audio_models WHERE enabled = 1")
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let slugs: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| format!("DB query: {e}"))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let count = slugs.len();
+    for slug in &slugs {
+        conn.execute(
+            "INSERT OR IGNORE INTO recording_analysis (recording, model_slug, completed)
+             VALUES (?1, ?2, 0)",
+            params![recording, slug],
+        )
+        .map_err(|e| format!("DB register_recording: {e}"))?;
+    }
+    Ok(count)
+}
+
+/// Mark a recording as analysed by a specific model.
+pub async fn mark_recording_analyzed(
+    recording: &str,
+    model_slug: &str,
+) -> Result<(), String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    conn.execute(
+        "UPDATE recording_analysis SET completed = 1
+         WHERE recording = ?1 AND model_slug = ?2",
+        params![recording, model_slug],
+    )
+    .map_err(|e| format!("DB mark_recording_analyzed: {e}"))?;
+    Ok(())
+}
+
+/// Check whether a recording has been analysed by all registered models.
+pub async fn is_recording_fully_analyzed(recording: &str) -> Result<bool, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let pending: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM recording_analysis
+             WHERE recording = ?1 AND completed = 0",
+            params![recording],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("DB is_recording_fully_analyzed: {e}"))?;
+    Ok(pending == 0)
+}
+
+/// Return all recordings that have been fully analysed by every registered
+/// model and can safely be deleted.
+pub async fn fully_analyzed_recordings() -> Result<Vec<String>, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT recording FROM recording_analysis
+             GROUP BY recording
+             HAVING COUNT(*) > 0 AND SUM(completed = 0) = 0",
+        )
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| format!("DB query: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// Remove tracking rows for a recording after the file has been deleted.
+pub async fn remove_recording_tracking(recording: &str) -> Result<(), String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    conn.execute(
+        "DELETE FROM recording_analysis WHERE recording = ?1",
+        params![recording],
+    )
+    .map_err(|e| format!("DB remove_recording_tracking: {e}"))?;
     Ok(())
 }
 

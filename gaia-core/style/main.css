@@ -877,3 +877,74 @@ code {
     align-items: center;
     gap: 0.75rem;
 }
+
+/* ─── Model Processing Group (per-model toggles in project card) ───────── */
+
+.model-processing-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.3rem 0;
+    min-width: 100%;
+}
+
+.model-processing-group .processing-group-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.model-processing-group .container-toggle-item {
+    padding-left: 0.5rem;
+}
+
+.model-settings-link {
+    font-size: 0.78rem;
+    color: var(--color-primary, #3b82f6);
+    text-decoration: none;
+    padding-left: 0.5rem;
+    margin-top: 0.1rem;
+}
+.model-settings-link:hover {
+    text-decoration: underline;
+}
+
+/* ─── Audio Model Settings (Settings page) ─────────────────────────────── */
+
+.audio-model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.audio-model-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--color-card-bg, #1e1e2e);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+}
+
+.audio-model-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.audio-model-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--color-text);
+}
+
+.audio-model-description {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
