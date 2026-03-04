@@ -129,6 +129,24 @@ pub async fn proxy_handler(
     let mut builder = Response::builder().status(status);
 
     for (key, value) in upstream_resp.headers() {
+        // Strip hop-by-hop headers that must not be forwarded by a proxy.
+        // The proxy buffers the full response body, so transfer-encoding
+        // and content-length from the upstream are invalid for the
+        // reconstructed response.  content-encoding is stripped because
+        // reqwest auto-decompresses the body.
+        let name = key.as_str();
+        if matches!(
+            name,
+            "transfer-encoding" | "connection" | "keep-alive" | "content-encoding"
+        ) {
+            continue;
+        }
+        // Drop content-length — for HTML the proxy rewrites the body so
+        // the size changes; for non-HTML reqwest may have decompressed it.
+        // Axum/hyper will set the correct value automatically.
+        if name == "content-length" {
+            continue;
+        }
         // Rewrite redirect Location headers to keep the browser in the proxy.
         if key == "location" {
             if let Ok(loc) = value.to_str() {
@@ -138,10 +156,6 @@ pub async fn proxy_handler(
                     continue;
                 }
             }
-        }
-        // Drop content-length for HTML since rewriting changes the size.
-        if is_html && key == "content-length" {
-            continue;
         }
         builder = builder.header(key, value);
     }

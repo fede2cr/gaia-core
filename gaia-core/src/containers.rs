@@ -472,6 +472,16 @@ pub async fn start(name: &str) -> Result<(), String> {
     if output.status.success() {
         tracing::info!("Container '{name}' started");
         set_status(name, "running");
+
+        // For audio processing containers, validate model loading in the
+        // background so we can report issues to the operator.
+        if name.starts_with("gaia-audio-processing") {
+            let cname = name.to_string();
+            tokio::spawn(async move {
+                validate_audio_processing(&cname).await;
+            });
+        }
+
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -740,4 +750,79 @@ pub async fn sync_with_db() {
         }
     }
     tracing::info!("Container sync complete ({} entries)", states.len());
+}
+
+// ── Audio processing model validation ────────────────────────────────────────
+
+/// Wait for an audio processing container to finish initialisation and
+/// check whether it successfully loaded its model.
+///
+/// Reads the container logs for up to ~30 seconds looking for the key
+/// phrases the processing server emits:
+///   - `"Model ready:"` → success
+///   - `"No models loaded"` → manifest was filtered out or model not found
+///   - `"Cannot load model"` → model file present but failed to load
+///
+/// The result is recorded in `set_status()` so the dashboard can show it.
+async fn validate_audio_processing(name: &str) {
+    let rt = runtime().await;
+    let cmd = runtime_cmd(rt);
+
+    // Give the container time to start, discover manifests, and
+    // download model files (if needed).  We check logs periodically.
+    for attempt in 0..6u32 {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        let output = match Command::new(cmd)
+            .args(["logs", "--tail", "50", name])
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+
+        let logs = String::from_utf8_lossy(&output.stdout);
+        let stderr_logs = String::from_utf8_lossy(&output.stderr);
+        // Podman sends container logs to stderr for some log drivers.
+        let combined = format!("{logs}{stderr_logs}");
+
+        if combined.contains("Model ready:") {
+            tracing::info!("[{name}] Model loaded successfully");
+            set_status(name, "running");
+            return;
+        }
+
+        if combined.contains("No models loaded") {
+            let msg = format!("warning: no models loaded — check manifest and MODEL_SLUGS");
+            tracing::warn!("[{name}] {msg}");
+            set_status(name, &format!("running ({msg})"));
+            return;
+        }
+
+        if combined.contains("Cannot load model") {
+            let msg = "warning: model file found but failed to load";
+            tracing::warn!("[{name}] {msg}");
+            set_status(name, &format!("running ({msg})"));
+            return;
+        }
+
+        // If the container has exited (crash), report that immediately
+        if !is_running(name).await {
+            let msg = "error: container exited during startup";
+            tracing::error!("[{name}] {msg}");
+            set_status(name, msg);
+            return;
+        }
+
+        tracing::debug!(
+            "[{name}] Checking model status (attempt {}/6)…",
+            attempt + 1
+        );
+    }
+
+    // Still no definitive signal after 30s — probably still downloading.
+    tracing::info!(
+        "[{name}] Model validation timed out — container may still be downloading model files"
+    );
 }
