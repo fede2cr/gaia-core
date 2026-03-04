@@ -96,6 +96,13 @@ pub fn default_audio_models() -> Vec<AudioModel> {
             enabled: false,
             container_kind: "processing:perch".into(),
         },
+        AudioModel {
+            slug: "batdetect2".into(),
+            name: "BatDetect2".into(),
+            description: "Bat echolocation call detection and species classification".into(),
+            enabled: false,
+            container_kind: "processing:batdetect2".into(),
+        },
     ]
 }
 

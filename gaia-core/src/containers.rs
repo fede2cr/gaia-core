@@ -540,14 +540,11 @@ async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
 
     // Tell the container which model to run.
     args.push("-e".into());
-    args.push(format!("MODEL_SLUG={model_slug}"));
+    args.push(format!("MODEL_SLUGS={model_slug}"));
 
-    // Tell the container how many processing peers exist.
-    let node_count = crate::db::active_audio_model_count()
-        .await
-        .unwrap_or(1);
+    // Instance identifier for multi-instance coordination.
     args.push("-e".into());
-    args.push(format!("PROCESSING_NODE_COUNT={node_count}"));
+    args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
 /// Discover and bind-mount every `/dev/video*` node from the host.
