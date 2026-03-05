@@ -484,12 +484,13 @@ pub async fn start(name: &str) -> Result<(), String> {
     }
     if name == "rms" {
         build_rms_args(&mut args).await;
-    }    if name == \"gaia-light-capture\" {
+    }
+    if name == "gaia-light-capture" {
         build_light_capture_args(&mut args).await;
     }
-    if name.starts_with(\"gaia-light-processing\") {
-        let model_slug = name.strip_prefix(\"gaia-light-processing-\")
-            .unwrap_or(\"pytorch-wildlife\")
+    if name.starts_with("gaia-light-processing") {
+        let model_slug = name.strip_prefix("gaia-light-processing-")
+            .unwrap_or("pytorch-wildlife")
             .to_string();
         build_light_processing_args(&mut args, &model_slug).await;
     }
