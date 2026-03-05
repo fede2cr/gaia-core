@@ -30,11 +30,11 @@ fn LifecycleBadge(
         let s = status.get();
         match s.as_str() {
             "pulling" => view! {
-                <span class="lifecycle-badge lifecycle-pulling">"Pulling…"</span>
+                <span class="lifecycle-badge lifecycle-pulling">"Pulling..."</span>
             }
             .into_view(),
             "starting" => view! {
-                <span class="lifecycle-badge lifecycle-starting">"Starting…"</span>
+                <span class="lifecycle-badge lifecycle-starting">"Starting..."</span>
             }
             .into_view(),
             s if s.starts_with("error") => view! {

@@ -39,7 +39,7 @@ pub async fn camera_stream(Query(params): Query<StreamParams>) -> Response {
     if tokio::fs::metadata(device).await.is_err() {
         return (
             StatusCode::NOT_FOUND,
-            format!("Device {device} not found — is it mounted into the container?"),
+            format!("Device {device} not found -- is it mounted into the container?"),
         )
             .into_response();
     }
@@ -108,7 +108,7 @@ pub async fn camera_stream(Query(params): Query<StreamParams>) -> Response {
                 Ok(0) => break,
                 Ok(n) => {
                     if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
-                        break; // receiver dropped — client disconnected
+                        break; // receiver dropped -- client disconnected
                     }
                 }
                 Err(e) => {

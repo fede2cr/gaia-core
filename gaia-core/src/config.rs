@@ -85,14 +85,14 @@ pub fn default_audio_models() -> Vec<AudioModel> {
         AudioModel {
             slug: "birdnet".into(),
             name: "BirdNET V2.4".into(),
-            description: "Bird song classification — ~6,500 species worldwide".into(),
+            description: "Bird song classification -- ~6,500 species worldwide".into(),
             enabled: false,
             container_kind: "processing".into(),
         },
         AudioModel {
             slug: "perch".into(),
             name: "Google Perch 2.0".into(),
-            description: "Multi-taxa wildlife classifier — ~15,000 species (birds, frogs, insects, mammals)".into(),
+            description: "Multi-taxa wildlife classifier -- ~15,000 species (birds, frogs, insects, mammals)".into(),
             enabled: false,
             container_kind: "processing:perch".into(),
         },

@@ -141,7 +141,7 @@ pub async fn proxy_handler(
         ) {
             continue;
         }
-        // Drop content-length — for HTML the proxy rewrites the body so
+        // Drop content-length -- for HTML the proxy rewrites the body so
         // the size changes; for non-HTML reqwest may have decompressed it.
         // Axum/hyper will set the correct value automatically.
         if name == "content-length" {

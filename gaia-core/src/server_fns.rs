@@ -73,7 +73,7 @@ pub async fn toggle_container(
 
     let name = crate::containers::container_name(&slug, &container_kind);
     if enabled {
-        // Start in the background — the UI polls for status updates.
+        // Start in the background -- the UI polls for status updates.
         let name_bg = name.clone();
         tokio::spawn(async move {
             if let Err(e) = crate::containers::start(&name_bg).await {
@@ -117,7 +117,7 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
                 "web" => t.web_enabled = *enabled,
                 "config" => t.config_enabled = *enabled,
                 _ => {
-                    // "processing" or "processing:{model}" — handled below
+                    // "processing" or "processing:{model}" -- handled below
                     // for the audio project, and as a simple flag for others.
                     if !kind.starts_with("processing") {
                         continue;

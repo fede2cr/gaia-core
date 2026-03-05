@@ -174,7 +174,7 @@ async fn detect_microphones_proc() -> Vec<HwDevice> {
 /// Info extracted from `/proc/asound/cards` for one sound card.
 #[derive(Clone, Debug)]
 struct CardInfo {
-    /// Short ALSA identifier (e.g. "iCE", "Generic_1") — used in
+    /// Short ALSA identifier (e.g. "iCE", "Generic_1") -- used in
     /// `hw:CARD=<name>,DEV=<n>` which is stable across namespaces.
     alsa_name: String,
     /// Human-readable long name (e.g. "Blue Snowball iCE").

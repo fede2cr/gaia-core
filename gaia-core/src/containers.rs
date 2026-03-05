@@ -151,14 +151,14 @@ fn load_config() -> ContainerConfig {
             }
             Err(e) => {
                 tracing::warn!(
-                    "Failed to parse {path}: {e} — using built-in defaults"
+                    "Failed to parse {path}: {e} -- using built-in defaults"
                 );
                 builtin_config()
             }
         },
         Err(_) => {
             tracing::info!(
-                "No container config at {path} — using built-in defaults"
+                "No container config at {path} -- using built-in defaults"
             );
             builtin_config()
         }
@@ -550,7 +550,7 @@ async fn build_audio_capture_args(args: &mut Vec<String>) {
         args.push(format!("REC_CARD={card}"));
     } else {
         tracing::warn!(
-            "gaia-audio-capture: no microphone assigned to project 'audio' — \
+            "gaia-audio-capture: no microphone assigned to project 'audio' -- \
              container will try ALSA default (may fail)"
         );
     }
@@ -577,7 +577,7 @@ async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
         }
         _ => {
             tracing::warn!(
-                "gaia-audio-processing ({model_slug}): no station location configured — \
+                "gaia-audio-processing ({model_slug}): no station location configured -- \
                  model will not filter by geographic range"
             );
         }
@@ -822,7 +822,7 @@ pub async fn sync_with_db() {
                 set_status(&name, "running");
             }
             (true, false) => {
-                // Should be running but isn't — start in background.
+                // Should be running but isn't -- start in background.
                 let name = name.clone();
                 tokio::spawn(async move {
                     if let Err(e) = start(&name).await {
@@ -885,7 +885,7 @@ async fn validate_audio_processing(name: &str) {
         }
 
         if combined.contains("No models loaded") {
-            let msg = format!("warning: no models loaded — check manifest and MODEL_SLUGS");
+            let msg = format!("warning: no models loaded -- check manifest and MODEL_SLUGS");
             tracing::warn!("[{name}] {msg}");
             set_status(name, &format!("running ({msg})"));
             return;
@@ -907,13 +907,13 @@ async fn validate_audio_processing(name: &str) {
         }
 
         tracing::debug!(
-            "[{name}] Checking model status (attempt {}/6)…",
+            "[{name}] Checking model status (attempt {}/6)...",
             attempt + 1
         );
     }
 
-    // Still no definitive signal after 30s — probably still downloading.
+    // Still no definitive signal after 30s -- probably still downloading.
     tracing::info!(
-        "[{name}] Model validation timed out — container may still be downloading model files"
+        "[{name}] Model validation timed out -- container may still be downloading model files"
     );
 }
