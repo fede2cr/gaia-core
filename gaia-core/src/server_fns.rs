@@ -122,9 +122,11 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
                     if !kind.starts_with("processing") {
                         continue;
                     }
-                    if slug != "audio" {
-                        t.processing_enabled = *enabled;
+                    if slug == "audio" || slug == "light" {
+                        // Handled by per-model blocks below.
+                        continue;
                     }
+                    t.processing_enabled = *enabled;
                 }
             }
         }
@@ -168,6 +170,46 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
 
         // processing_enabled is true if ANY model node is running.
         audio.processing_enabled = audio
+            .processing_models
+            .iter()
+            .any(|n| n.running);
+    }
+
+    // Build per-model processing nodes for the light (camera-trap) project.
+    if let Some(light) = targets.iter_mut().find(|t| t.slug == "light") {
+        let models = crate::config::default_light_models();
+        let model_states = crate::db::all_light_model_states()
+            .await
+            .unwrap_or_default();
+
+        for model in &models {
+            let model_enabled = model_states
+                .iter()
+                .find(|(s, _)| s == &model.slug)
+                .map(|(_, e)| *e)
+                .unwrap_or(model.enabled);
+
+            if !model_enabled {
+                continue;
+            }
+
+            let container_running = states
+                .iter()
+                .find(|(s, k, _)| s == "light" && *k == model.container_kind)
+                .map(|(_, _, e)| *e)
+                .unwrap_or(false);
+
+            light.processing_models.push(
+                crate::config::AudioProcessingNode {
+                    model_slug: model.slug.clone(),
+                    model_name: model.name.clone(),
+                    container_kind: model.container_kind.clone(),
+                    running: container_running,
+                },
+            );
+        }
+
+        light.processing_enabled = light
             .processing_models
             .iter()
             .any(|n| n.running);
@@ -448,6 +490,101 @@ pub async fn get_active_processing_node_count() -> Result<usize, ServerFnError> 
     crate::db::active_audio_model_count()
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+// ── Light model management ───────────────────────────────────────────────
+
+/// A light (camera-trap) model with its current enabled state.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightModelInfo {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+}
+
+/// Return all known light models with their persisted enabled state.
+#[server(GetLightModels, "/api")]
+pub async fn get_light_models() -> Result<Vec<LightModelInfo>, ServerFnError> {
+    let models = crate::config::default_light_models();
+    let db_states = crate::db::all_light_model_states()
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    Ok(models
+        .into_iter()
+        .map(|m| {
+            let enabled = db_states
+                .iter()
+                .find(|(s, _)| s == &m.slug)
+                .map(|(_, e)| *e)
+                .unwrap_or(m.enabled);
+            LightModelInfo {
+                slug: m.slug,
+                name: m.name,
+                description: m.description,
+                enabled,
+            }
+        })
+        .collect())
+}
+
+/// Enable or disable a light model in Settings.
+///
+/// When a model is disabled, its processing container is also stopped.
+#[server(ToggleLightModel, "/api")]
+pub async fn toggle_light_model(
+    slug: String,
+    enabled: bool,
+) -> Result<Vec<LightModelInfo>, ServerFnError> {
+    crate::db::set_light_model_enabled(&slug, enabled)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    if !enabled {
+        let kind = crate::config::light_model_container_kind(&slug);
+        let name = crate::containers::container_name("light", &kind);
+        crate::db::set_container_enabled("light", &kind, false)
+            .await
+            .ok();
+        let _ = crate::containers::stop(&name).await;
+        tracing::info!("Disabled light model '{slug}' and stopped container '{name}'");
+    } else {
+        tracing::info!("Enabled light model '{slug}'");
+    }
+
+    get_light_models().await
+}
+
+/// Toggle a specific light processing-model container (start / stop).
+#[server(ToggleLightProcessing, "/api")]
+pub async fn toggle_light_processing(
+    model_slug: String,
+    enabled: bool,
+) -> Result<Vec<ProjectTarget>, ServerFnError> {
+    let kind = crate::config::light_model_container_kind(&model_slug);
+    crate::db::set_container_enabled("light", &kind, enabled)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    let name = crate::containers::container_name("light", &kind);
+    if enabled {
+        let name_bg = name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::containers::start(&name_bg).await {
+                tracing::error!("Background start of '{name_bg}' failed: {e}");
+            }
+        });
+    } else {
+        let _ = crate::containers::stop(&name).await;
+    }
+
+    tracing::info!(
+        "Light processing model '{model_slug}' {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+
+    get_projects().await
 }
 
 // ── Recording analysis tracking ──────────────────────────────────────────

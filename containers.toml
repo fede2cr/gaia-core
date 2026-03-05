@@ -79,3 +79,21 @@ volumes = ["gaia-gmn-data:/data"]
 [rms]
 image   = "docker.io/fede2/rms"
 volumes = ["rms-data:/home/rms/RMS_data"]
+
+# ── Gaia Light (camera trap) ─────────────────────────────────────────
+
+[gaia-light-capture]
+image   = "docker.io/fede2/gaia-light-capture"
+volumes = ["gaia-light-data:/data"]
+
+[gaia-light-processing]
+image   = "docker.io/fede2/gaia-light-processing"
+volumes = [
+    "gaia-light-data:/data",
+    "gaia-light-models:/models",
+]
+
+[gaia-light-web]
+image   = "docker.io/fede2/gaia-light-web"
+env     = ["LEPTOS_SITE_ADDR=0.0.0.0:8190"]
+volumes = ["gaia-light-data:/data"]

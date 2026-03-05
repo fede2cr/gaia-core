@@ -47,6 +47,10 @@ const SERVICE_TYPES: &[(&str, &str)] = &[
     // Global Meteor Network
     ("_rms._tcp", "gmn"),
     ("_gaia-gmn-cap._tcp", "gmn"),
+    // gaia-light (camera trap)
+    ("_gaia-lt-cap._tcp", "light"),
+    ("_gaia-lt-proc._tcp", "light"),
+    ("_gaia-lt-web._tcp", "light"),
 ];
 
 /// Instance name prefixes → Gaia project slug mapping.
@@ -62,6 +66,8 @@ const INSTANCE_PREFIXES: &[(&str, &str)] = &[
     // GMN / RMS
     ("gaia-gmn-", "gmn"),
     ("rms-", "gmn"),
+    // gaia-light
+    ("gaia-light-", "light"),
 ];
 
 /// Maximum time to wait for `avahi-browse -t` to complete its scan.

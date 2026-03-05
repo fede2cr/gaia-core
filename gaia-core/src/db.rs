@@ -57,6 +57,11 @@ pub async fn init() {
             enabled INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS light_models (
+            slug    TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS recording_analysis (
             recording  TEXT NOT NULL,
             model_slug TEXT NOT NULL,
@@ -299,6 +304,72 @@ pub async fn active_audio_model_count() -> Result<usize, String> {
             |row| row.get(0),
         )
         .map_err(|e| format!("DB count audio models: {e}"))?;
+    Ok(count as usize)
+}
+
+// ── Light model state ──────────────────────────────────────────────────────
+
+/// Persist the enabled state of a light (camera-trap) model.
+pub async fn set_light_model_enabled(slug: &str, enabled: bool) -> Result<(), String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    conn.execute(
+        "INSERT INTO light_models (slug, enabled)
+         VALUES (?1, ?2)
+         ON CONFLICT(slug) DO UPDATE SET enabled = excluded.enabled",
+        params![slug, enabled as i32],
+    )
+    .map_err(|e| format!("DB set_light_model_enabled: {e}"))?;
+    Ok(())
+}
+
+/// Load the enabled state for a light model.
+/// Returns `None` if the slug has never been persisted.
+pub async fn get_light_model_enabled(slug: &str) -> Result<Option<bool>, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT enabled FROM light_models WHERE slug = ?1")
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let result: Option<i32> = stmt
+        .query_row(params![slug], |row| row.get(0))
+        .ok();
+    Ok(result.map(|v| v != 0))
+}
+
+/// Load all light model enabled states.
+pub async fn all_light_model_states() -> Result<Vec<(String, bool)>, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT slug, enabled FROM light_models")
+        .map_err(|e| format!("DB prepare: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i32>(1)? != 0,
+            ))
+        })
+        .map_err(|e| format!("DB query: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// Count how many light models are currently enabled.
+pub async fn active_light_model_count() -> Result<usize, String> {
+    let guard = DB.lock().await;
+    let conn = guard.as_ref().ok_or("DB not initialised")?;
+    let count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM light_models WHERE enabled = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("DB count light models: {e}"))?;
     Ok(count as usize)
 }
 

@@ -183,6 +183,10 @@ fn spec_for(container_name: &str) -> Option<ContainerSpec> {
     if container_name.starts_with("gaia-audio-processing-") {
         return config().containers.get("gaia-audio-processing").cloned();
     }
+    // Fallback for model-specific light processing containers.
+    if container_name.starts_with("gaia-light-processing-") {
+        return config().containers.get("gaia-light-processing").cloned();
+    }
     None
 }
 
@@ -255,6 +259,30 @@ fn builtin_config() -> ContainerConfig {
     m.insert("rms".into(), ContainerSpec {
         image: "docker.io/fede2/rms".into(),
         volumes: vec!["rms-data:/home/rms/RMS_data".into()],
+        ..Default::default()
+    });
+
+    // ── Gaia Light (camera trap) ──────────────────────────────────
+
+    m.insert("gaia-light-capture".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-light-capture".into(),
+        volumes: vec!["gaia-light-data:/data".into()],
+        ..Default::default()
+    });
+
+    m.insert("gaia-light-processing".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-light-processing".into(),
+        volumes: vec![
+            "gaia-light-data:/data".into(),
+            "gaia-light-models:/models".into(),
+        ],
+        ..Default::default()
+    });
+
+    m.insert("gaia-light-web".into(), ContainerSpec {
+        image: "docker.io/fede2/gaia-light-web".into(),
+        env: vec!["LEPTOS_SITE_ADDR=0.0.0.0:8190".into()],
+        volumes: vec!["gaia-light-data:/data".into()],
         ..Default::default()
     });
 
@@ -456,8 +484,15 @@ pub async fn start(name: &str) -> Result<(), String> {
     }
     if name == "rms" {
         build_rms_args(&mut args).await;
+    }    if name == \"gaia-light-capture\" {
+        build_light_capture_args(&mut args).await;
     }
-
+    if name.starts_with(\"gaia-light-processing\") {
+        let model_slug = name.strip_prefix(\"gaia-light-processing-\")
+            .unwrap_or(\"pytorch-wildlife\")
+            .to_string();
+        build_light_processing_args(&mut args, &model_slug).await;
+    }
     // Image (must be last)
     args.push(spec.image);
 
@@ -662,6 +697,62 @@ async fn build_rms_args(args: &mut Vec<String>) {
     } else {
         tracing::info!("rms: mounted devices {:?}", mounted);
     }
+}
+
+/// Build dynamic container arguments for gaia-light-capture.
+///
+/// 1. Reads the camera device assigned to project "light" from the DB
+///    (falls back to `/dev/video0`).
+/// 2. Bind-mounts all `/dev/video*` nodes from the host.
+/// 3. Sets `VIDEO_DEVICE` so the capture server knows which camera to use.
+async fn build_light_capture_args(args: &mut Vec<String>) {
+    let video_device = match crate::db::get_all_assignments().await {
+        Ok(assignments) => assignments
+            .iter()
+            .find(|a| a.project == "light")
+            .map(|a| a.device_id.clone())
+            .unwrap_or_else(|| "/dev/video0".into()),
+        Err(_) => "/dev/video0".into(),
+    };
+
+    tracing::info!("gaia-light-capture: using camera device {video_device}");
+    args.push("-e".into());
+    args.push(format!("VIDEO_DEVICE={video_device}"));
+
+    let mounted = mount_video_devices(args).await;
+    if mounted.is_empty() {
+        args.push("-v".into());
+        args.push(format!("{video_device}:{video_device}"));
+        tracing::warn!("gaia-light-capture: no /dev/video* devices found on host");
+    } else {
+        tracing::info!("gaia-light-capture: mounted devices {:?}", mounted);
+    }
+}
+
+/// Inject station lat/lon and model slug into gaia-light-processing.
+async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
+    let lat = crate::db::get_setting("latitude").await.ok().flatten();
+    let lon = crate::db::get_setting("longitude").await.ok().flatten();
+
+    match (lat, lon) {
+        (Some(la), Some(lo)) if !la.is_empty() && !lo.is_empty() => {
+            tracing::info!("gaia-light-processing ({model_slug}): LATITUDE={la}, LONGITUDE={lo}");
+            args.push("-e".into());
+            args.push(format!("LATITUDE={la}"));
+            args.push("-e".into());
+            args.push(format!("LONGITUDE={lo}"));
+        }
+        _ => {
+            tracing::warn!(
+                "gaia-light-processing ({model_slug}): no station location configured"
+            );
+        }
+    }
+
+    args.push("-e".into());
+    args.push(format!("MODEL_SLUGS={model_slug}"));
+    args.push("-e".into());
+    args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
 /// Stop a container by name.  Returns Ok(()) on success or an error message.

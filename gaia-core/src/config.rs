@@ -118,6 +118,40 @@ pub fn model_container_kind(model_slug: &str) -> String {
     }
 }
 
+// ── Light (camera trap) model definitions ────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightModel {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub container_kind: String,
+}
+
+pub fn default_light_models() -> Vec<LightModel> {
+    vec![
+        LightModel {
+            slug: "pytorch-wildlife".into(),
+            name: "Microsoft Pytorch-Wildlife".into(),
+            description: "MegaDetector v6 – camera-trap animal/person/vehicle detection".into(),
+            enabled: false,
+            container_kind: "processing:pytorch-wildlife".into(),
+        },
+        LightModel {
+            slug: "speciesnet".into(),
+            name: "Google SpeciesNet".into(),
+            description: "Camera-trap species identification across 2,000+ species".into(),
+            enabled: false,
+            container_kind: "processing:speciesnet".into(),
+        },
+    ]
+}
+
+pub fn light_model_container_kind(model_slug: &str) -> String {
+    format!("processing:{model_slug}")
+}
+
 // ── Project targets ──────────────────────────────────────────────────────
 
 /// Returns the default list of upstream project targets.
@@ -170,6 +204,22 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             web_enabled: false,
             config_enabled: false,
             config_port: 8181,
+            processing_models: vec![],
+        },
+        ProjectTarget {
+            name: "Gaia Light".into(),
+            slug: "light".into(),
+            description:
+                "Camera-trap wildlife detection using Pytorch-Wildlife and SpeciesNet."
+                    .into(),
+            upstream_url: std::env::var("GAIA_LIGHT_URL")
+                .unwrap_or_else(|_| "http://localhost:8190".into()),
+            port: 8190,
+            capture_enabled: false,
+            processing_enabled: false,
+            web_enabled: false,
+            config_enabled: false,
+            config_port: 0,
             processing_models: vec![],
         },
     ]
