@@ -337,7 +337,7 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
             kind: DeviceKind::Camera,
             id: dev_path,
             label,
-            suggested_project: "gmn".into(),
+            suggested_project: "light".into(),
         });
     }
 

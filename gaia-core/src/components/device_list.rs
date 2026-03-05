@@ -120,6 +120,7 @@ fn DeviceRow(
             >
                 <option value="none" selected=move || selected.get().is_empty()>"Unassigned"</option>
                 <option value="audio" selected=move || selected.get() == "audio">"Gaia Audio"</option>
+                <option value="light" selected=move || selected.get() == "light">"Gaia Light"</option>
                 <option value="radio" selected=move || selected.get() == "radio">"Gaia Radio"</option>
                 <option value="gmn" selected=move || selected.get() == "gmn">"GMN (Meteor)"</option>
             </select>
