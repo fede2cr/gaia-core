@@ -241,6 +241,33 @@ pub async fn set_setting(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Debug logging ────────────────────────────────────────────────────────
+
+/// Check whether debug logging is enabled for the given project slug.
+pub async fn is_debug_enabled(slug: &str) -> bool {
+    get_setting(&format!("debug:{slug}"))
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Set the debug logging flag for a project.
+pub async fn set_debug_enabled(slug: &str, enabled: bool) -> Result<(), String> {
+    set_setting(&format!("debug:{slug}"), if enabled { "1" } else { "0" }).await
+}
+
+/// Return the debug-logging state for every known project slug.
+pub async fn all_debug_states() -> Result<Vec<(String, bool)>, String> {
+    let slugs = ["audio", "radio", "gmn", "light"];
+    let mut out = Vec::with_capacity(slugs.len());
+    for slug in &slugs {
+        out.push((slug.to_string(), is_debug_enabled(slug).await));
+    }
+    Ok(out)
+}
+
 // ── Audio model state ─────────────────────────────────────────────────────
 
 /// Persist the enabled state of an audio model.

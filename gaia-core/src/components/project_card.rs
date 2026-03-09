@@ -3,7 +3,7 @@
 use leptos::*;
 
 use crate::components::toggle::ToggleSwitch;
-use crate::server_fns::{toggle_audio_processing, toggle_container};
+use crate::server_fns::{toggle_audio_processing, toggle_container, CaptureHealth};
 use crate::config::AudioProcessingNode;
 
 /// Map `(slug, kind)` to the container name used by the runtime.
@@ -46,6 +46,37 @@ fn LifecycleBadge(
     }
 }
 
+/// Warning badge shown when the capture container has paused recording
+/// because disk usage exceeds the configured threshold.
+#[component]
+fn DiskBadge(
+    /// Project slug used to look up capture health from context.
+    slug: String,
+) -> impl IntoView {
+    let health_list = use_context::<Signal<Vec<CaptureHealth>>>()
+        .unwrap_or(Signal::derive(|| vec![]));
+
+    let slug = slug.clone();
+    move || {
+        let slug = slug.clone();
+        let list = health_list.get();
+        if let Some(h) = list.iter().find(|h| h.slug == slug) {
+            if h.capture_paused {
+                return view! {
+                    <span
+                        class="lifecycle-badge lifecycle-error"
+                        title=format!("Disk usage: {:.0}%", h.disk_usage_pct)
+                    >
+                        "⚠ Disk full – capture paused"
+                    </span>
+                }
+                .into_view();
+            }
+        }
+        ().into_view()
+    }
+}
+
 /// A card showing project name, description, and individual toggles for
 /// capture / processing / web containers.
 ///
@@ -77,6 +108,8 @@ pub fn ProjectCard(
     let (capture, set_capture) = create_signal(initial_capture);
     let (processing, set_processing) = create_signal(initial_processing);
     let (web, set_web) = create_signal(initial_web);
+
+    let slug_for_disk = slug.clone();
 
     let slug_for_link = slug.clone();
     let slug_for_config = slug.clone();
@@ -235,6 +268,7 @@ pub fn ProjectCard(
                 <div class="container-toggle-item">
                     <ToggleSwitch label="Capture".to_string() checked=capture on_toggle=on_capture />
                     <LifecycleBadge status=cap_status />
+                    <DiskBadge slug=slug_for_disk.clone() />
                 </div>
 
                 // Processing section: per-model toggles or a single toggle.

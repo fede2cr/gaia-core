@@ -14,8 +14,8 @@ pub struct ProjectTarget {
     /// Base URL of the upstream web interface (e.g. "http://localhost:3000").
     pub upstream_url: String,
     /// The TCP port the upstream listens on (for display purposes).
-    pub port: u16,
-    /// Whether the capture container is enabled.
+    pub port: u16,    /// TCP port for the capture HTTP API (0 = no capture API).
+    pub capture_port: u16,    /// Whether the capture container is enabled.
     pub capture_enabled: bool,
     /// Whether the processing container is enabled.
     ///
@@ -168,6 +168,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             upstream_url: std::env::var("GAIA_AUDIO_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             port: 3000,
+            capture_port: 8089,
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,
@@ -184,6 +185,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             upstream_url: std::env::var("GAIA_RADIO_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
             port: 8080,
+            capture_port: 0,
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,
@@ -199,6 +201,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             upstream_url: std::env::var("GAIA_GMN_URL")
                 .unwrap_or_else(|_| "http://localhost:8180".into()),
             port: 8180,
+            capture_port: 0,
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,
@@ -215,6 +218,7 @@ pub fn default_targets() -> Vec<ProjectTarget> {
             upstream_url: std::env::var("GAIA_LIGHT_URL")
                 .unwrap_or_else(|_| "http://localhost:8190".into()),
             port: 8190,
+            capture_port: 8090,
             capture_enabled: false,
             processing_enabled: false,
             web_enabled: false,

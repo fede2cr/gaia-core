@@ -6,7 +6,8 @@ use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
-    get_audio_models, get_location, get_projects, set_location, toggle_audio_model,
+    get_audio_models, get_debug_settings, get_location, get_projects, set_location,
+    toggle_audio_model, toggle_debug_logging, DebugState,
 };
 
 /// Settings page showing current proxy configuration, port assignments,
@@ -139,6 +140,15 @@ pub fn SettingsPage() -> impl IntoView {
                 "captured recordings and only deleting files once all models have analysed them."
             </p>
             <AudioModelSettings/>
+
+            // ── Debug Logging ────────────────────────────────────────
+            <h2>"Debug Logging"</h2>
+            <p class="page-description">
+                "Enable verbose debug logs for each project's containers. "
+                "Useful for diagnosing issues like files not being deleted or "
+                "disk space not being freed. Takes effect on the next container restart."
+            </p>
+            <DebugLoggingSettings/>
 
             // ── Hardware & Network Discovery ────────────────────────
             <h2>"Hardware & Network"</h2>
@@ -295,6 +305,67 @@ fn AudioModelSettings() -> impl IntoView {
                         None
                     }
                 }}
+            </div>
+        </Suspense>
+    }
+}
+
+/// Per-project debug logging toggles for the Settings page.
+#[component]
+fn DebugLoggingSettings() -> impl IntoView {
+    let debug_res = create_resource(|| (), |_| get_debug_settings());
+    let (items, set_items) = create_signal(Vec::<DebugState>::new());
+
+    create_effect(move |_| {
+        if let Some(Ok(ds)) = debug_res.get() {
+            set_items.set(ds);
+        }
+    });
+
+    view! {
+        <Suspense fallback=move || view! { <p class="loading">"Loading..."</p> }>
+            <div class="debug-logging-list">
+                <For
+                    each=move || items.get()
+                    key=|d| d.slug.clone()
+                    children=move |item| {
+                        let slug = item.slug.clone();
+                        let name = item.name.clone();
+
+                        let (enabled, set_enabled) = create_signal(item.enabled);
+                        let toggle_action = {
+                            let slug = slug.clone();
+                            create_action(move |new_state: &bool| {
+                                let slug = slug.clone();
+                                let new_state = *new_state;
+                                async move {
+                                    let _ = toggle_debug_logging(slug, new_state).await;
+                                }
+                            })
+                        };
+
+                        let on_toggle = Callback::new(move |val: bool| {
+                            set_enabled.set(val);
+                            toggle_action.dispatch(val);
+                        });
+
+                        view! {
+                            <div class="audio-model-row">
+                                <div class="audio-model-info">
+                                    <span class="audio-model-name">{name}</span>
+                                    <span class="audio-model-description">
+                                        "Sets RUST_LOG=debug on next container restart"
+                                    </span>
+                                </div>
+                                <ToggleSwitch
+                                    label=slug
+                                    checked=enabled
+                                    on_toggle=on_toggle
+                                />
+                            </div>
+                        }
+                    }
+                />
             </div>
         </Suspense>
     }

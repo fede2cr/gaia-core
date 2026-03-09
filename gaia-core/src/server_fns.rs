@@ -484,6 +484,63 @@ pub async fn toggle_audio_processing(
     get_projects().await
 }
 
+// ── Debug logging ────────────────────────────────────────────────────────
+
+/// Debug logging state for a single project.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DebugState {
+    pub slug: String,
+    pub name: String,
+    pub enabled: bool,
+}
+
+/// Return the debug-logging toggle state for every project.
+#[server(GetDebugSettings, "/api")]
+pub async fn get_debug_settings() -> Result<Vec<DebugState>, ServerFnError> {
+    let states = crate::db::all_debug_states()
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    let names: std::collections::HashMap<&str, &str> = [
+        ("audio", "Gaia Audio"),
+        ("radio", "Gaia Radio"),
+        ("gmn", "Global Meteor Network"),
+        ("light", "Gaia Light"),
+    ]
+    .into_iter()
+    .collect();
+
+    Ok(states
+        .into_iter()
+        .map(|(slug, enabled)| DebugState {
+            name: names.get(slug.as_str()).unwrap_or(&slug.as_str()).to_string(),
+            slug,
+            enabled,
+        })
+        .collect())
+}
+
+/// Toggle debug logging for a project.
+///
+/// The change takes effect the next time a container in this project is
+/// (re)started — running containers are not affected until restart.
+#[server(ToggleDebugLogging, "/api")]
+pub async fn toggle_debug_logging(
+    slug: String,
+    enabled: bool,
+) -> Result<Vec<DebugState>, ServerFnError> {
+    crate::db::set_debug_enabled(&slug, enabled)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+
+    tracing::info!(
+        "Debug logging for project '{slug}' {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+
+    get_debug_settings().await
+}
+
 /// Return the number of currently-active audio processing nodes.
 #[server(GetActiveProcessingNodeCount, "/api")]
 pub async fn get_active_processing_node_count() -> Result<usize, ServerFnError> {
@@ -630,4 +687,66 @@ pub async fn remove_recording_tracking(recording: String) -> Result<(), ServerFn
     crate::db::remove_recording_tracking(&recording)
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))
+}
+
+// ── Capture health (disk guard) ─────────────────────────────────────────
+
+/// Capture health information reported by a capture container.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CaptureHealth {
+    /// Project slug, e.g. "audio".
+    pub slug: String,
+    /// Current disk usage percentage (0–100).
+    pub disk_usage_pct: f64,
+    /// `true` when capture is paused due to disk pressure.
+    pub capture_paused: bool,
+}
+
+/// Poll the `/api/health` endpoint of all capture containers that expose
+/// an HTTP API.  Returns one [`CaptureHealth`] per reachable container.
+///
+/// Containers with `capture_port == 0` or that are unreachable are silently
+/// skipped.
+#[server(GetCaptureHealth, "/api")]
+pub async fn get_capture_health() -> Result<Vec<CaptureHealth>, ServerFnError> {
+    let targets = crate::config::default_targets();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    let mut results = Vec::new();
+
+    for t in &targets {
+        if t.capture_port == 0 {
+            continue;
+        }
+        let url = format!("http://localhost:{}/api/health", t.capture_port);
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                // Parse as a generic JSON value so we tolerate older capture
+                // images that don't include the disk fields yet.
+                if let Ok(body) = resp.json::<serde_json::Value>().await {
+                    let disk_usage_pct = body
+                        .get("disk_usage_pct")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let capture_paused = body
+                        .get("capture_paused")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    results.push(CaptureHealth {
+                        slug: t.slug.clone(),
+                        disk_usage_pct,
+                        capture_paused,
+                    });
+                }
+            }
+            _ => {
+                // Container unreachable — skip.
+            }
+        }
+    }
+
+    Ok(results)
 }
