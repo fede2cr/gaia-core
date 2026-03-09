@@ -625,6 +625,14 @@ async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
     // Instance identifier for multi-instance coordination.
     args.push("-e".into());
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
+
+    // Number of parallel processing threads (default handled by container).
+    if let Ok(Some(threads)) = crate::db::get_setting("processing_threads").await {
+        if !threads.is_empty() {
+            args.push("-e".into());
+            args.push(format!("PROCESSING_THREADS={threads}"));
+        }
+    }
 }
 
 /// Discover and bind-mount every `/dev/video*` node from the host.

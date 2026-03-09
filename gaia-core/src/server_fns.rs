@@ -308,6 +308,29 @@ pub async fn set_location(
     })
 }
 
+// ── Processing Threads ───────────────────────────────────────────────────
+
+/// Get the configured number of parallel audio processing threads.
+#[server(GetProcessingThreads, "/api")]
+pub async fn get_processing_threads() -> Result<u32, ServerFnError> {
+    let val = crate::db::get_setting("processing_threads")
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?
+        .unwrap_or_default();
+    Ok(val.parse::<u32>().unwrap_or(1).max(1))
+}
+
+/// Set the number of parallel audio processing threads.
+#[server(SetProcessingThreads, "/api")]
+pub async fn set_processing_threads(threads: u32) -> Result<u32, ServerFnError> {
+    let threads = threads.max(1).min(8);
+    crate::db::set_setting("processing_threads", &threads.to_string())
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    tracing::info!("Processing threads updated to {threads}");
+    Ok(threads)
+}
+
 /// Assign a device to a project (or "none" to un-assign).
 #[server(AssignDevice, "/api")]
 pub async fn assign_device(

@@ -6,8 +6,8 @@ use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
-    get_audio_models, get_debug_settings, get_location, get_projects, set_location,
-    toggle_audio_model, toggle_debug_logging, DebugState,
+    get_audio_models, get_debug_settings, get_location, get_processing_threads, get_projects,
+    set_location, set_processing_threads, toggle_audio_model, toggle_debug_logging, DebugState,
 };
 
 /// Settings page showing current proxy configuration, port assignments,
@@ -140,6 +140,15 @@ pub fn SettingsPage() -> impl IntoView {
                 "captured recordings and only deleting files once all models have analysed them."
             </p>
             <AudioModelSettings/>
+
+            // ── Processing Performance ───────────────────────────────
+            <h2>"Processing Performance"</h2>
+            <p class="page-description">
+                "Number of parallel threads for audio analysis. "
+                "Higher values process recordings faster but use more CPU and RAM "
+                "(each thread loads its own copy of the model). Takes effect on next container restart."
+            </p>
+            <ProcessingThreadsSettings/>
 
             // ── Debug Logging ────────────────────────────────────────
             <h2>"Debug Logging"</h2>
@@ -367,6 +376,82 @@ fn DebugLoggingSettings() -> impl IntoView {
                     }
                 />
             </div>
+        </Suspense>
+    }
+}
+
+/// Numeric input for the parallel processing thread count.
+#[component]
+fn ProcessingThreadsSettings() -> impl IntoView {
+    let threads_res = create_resource(|| (), |_| get_processing_threads());
+    let (threads, set_threads) = create_signal(1u32);
+    let (status_msg, set_status) = create_signal(Option::<String>::None);
+
+    let save_action = create_action(move |val: &u32| {
+        let val = *val;
+        async move { set_processing_threads(val).await }
+    });
+
+    // Populate from DB.
+    create_effect(move |_| {
+        if let Some(Ok(n)) = threads_res.get() {
+            set_threads.set(n);
+        }
+    });
+
+    // Show feedback.
+    create_effect(move |_| {
+        if let Some(result) = save_action.value().get() {
+            match result {
+                Ok(n) => {
+                    set_threads.set(n);
+                    set_status.set(Some(format!("Saved ({n} threads). Restart processing containers to apply.")));
+                }
+                Err(e) => set_status.set(Some(format!("Error: {e}"))),
+            }
+        }
+    });
+
+    let on_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        set_status.set(None);
+        save_action.dispatch(threads.get());
+    };
+
+    view! {
+        <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+            <form class="location-form" on:submit=on_submit>
+                <div class="location-fields">
+                    <label class="location-label">
+                        "Threads"
+                        <input
+                            type="number"
+                            class="location-input"
+                            min="1"
+                            max="8"
+                            prop:value=move || threads.get().to_string()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<u32>() {
+                                    set_threads.set(v.max(1).min(8));
+                                }
+                            }
+                        />
+                    </label>
+                    <button type="submit" class="location-save-btn"
+                        disabled=move || save_action.pending().get()
+                    >
+                        {move || if save_action.pending().get() { "Saving..." } else { "Save" }}
+                    </button>
+                </div>
+                {move || status_msg.get().map(|msg| {
+                    let cls = if msg.starts_with("Error") {
+                        "location-status location-error"
+                    } else {
+                        "location-status location-ok"
+                    };
+                    view! { <p class=cls>{msg}</p> }
+                })}
+            </form>
         </Suspense>
     }
 }
