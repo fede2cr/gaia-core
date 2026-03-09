@@ -325,6 +325,27 @@ pub fn all_statuses() -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// Derive the project slug from a container name.
+///
+/// This is the inverse of [`container_name`]: given `"gaia-audio-capture"`
+/// it returns `"audio"`.  Returns an empty string for unrecognised names.
+fn project_slug_from_container(name: &str) -> String {
+    // Special cases first.
+    if name == "rms" {
+        return "gmn".into();
+    }
+    // General pattern: gaia-{slug}-{kind…}
+    if let Some(rest) = name.strip_prefix("gaia-") {
+        // The slug is the first segment: audio, radio, gmn, light.
+        for slug in ["audio", "radio", "gmn", "light"] {
+            if rest.starts_with(slug) {
+                return slug.into();
+            }
+        }
+    }
+    String::new()
+}
+
 /// Derive the container name from a project slug and container kind.
 ///
 /// Convention:  `gaia-{slug}-{kind}`
@@ -436,6 +457,19 @@ pub async fn start(name: &str) -> Result<(), String> {
     for e in &spec.env {
         args.push("-e".into());
         args.push(e.clone());
+    }
+
+    // Debug logging — inject RUST_LOG=debug when the operator has
+    // enabled debug mode for this project in the Settings page.
+    let project_slug = project_slug_from_container(name);
+    if !project_slug.is_empty() && crate::db::is_debug_enabled(&project_slug).await {
+        // Only inject if the spec doesn't already set RUST_LOG.
+        let has_rust_log = spec.env.iter().any(|e| e.starts_with("RUST_LOG="));
+        if !has_rust_log {
+            tracing::info!("Injecting RUST_LOG=debug for container '{name}' (project '{project_slug}')");
+            args.push("-e".into());
+            args.push("RUST_LOG=debug".into());
+        }
     }
 
     // Device mappings
