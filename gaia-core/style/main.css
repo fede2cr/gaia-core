@@ -560,6 +560,27 @@ code {
     50% { opacity: 0.5; }
 }
 
+/* ─── Camera Mode Badge ────────────────────────────────────────────────── */
+
+.camera-mode-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+.camera-mode-badge.day {
+    color: #d97706;
+    background: rgba(217, 119, 6, 0.12);
+}
+
+.camera-mode-badge.night {
+    color: #6366f1;
+    background: rgba(99, 102, 241, 0.12);
+}
+
 /* ─── Container Badges (Settings page) ─────────────────────────────────── */
 
 .container-badges {

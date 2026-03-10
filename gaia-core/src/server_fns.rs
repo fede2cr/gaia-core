@@ -781,6 +781,9 @@ pub struct CaptureHealth {
     pub disk_usage_pct: f64,
     /// `true` when capture is paused due to disk pressure.
     pub capture_paused: bool,
+    /// Camera mode: `Some("day")` or `Some("night")` when the capture
+    /// server reports brightness info, `None` otherwise.
+    pub camera_mode: Option<String>,
 }
 
 /// Poll the `/api/health` endpoint of all capture containers that expose
@@ -816,10 +819,34 @@ pub async fn get_capture_health() -> Result<Vec<CaptureHealth>, ServerFnError> {
                         .get("capture_paused")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
+                    // Try to fetch camera brightness info from the
+                    // capture server's /api/camera endpoint.
+                    let camera_mode = match client
+                        .get(format!(
+                            "http://localhost:{}/api/camera",
+                            t.capture_port
+                        ))
+                        .send()
+                        .await
+                    {
+                        Ok(r) if r.status().is_success() => r
+                            .json::<serde_json::Value>()
+                            .await
+                            .ok()
+                            .and_then(|v| {
+                                let is_dark = v.get("is_dark")?.as_bool()?;
+                                Some(
+                                    if is_dark { "night" } else { "day" }.to_string(),
+                                )
+                            }),
+                        _ => None,
+                    };
+
                     results.push(CaptureHealth {
                         slug: t.slug.clone(),
                         disk_usage_pct,
                         capture_paused,
+                        camera_mode,
                     });
                 }
             }
