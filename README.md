@@ -6,6 +6,13 @@ The project will start with an easy to use web interface, were you select the ro
 
 All of the components will be packaged into containers by each of the participating projects, and the Gaia core itself will be a container.
 
+## Demo
+
+This would be on a processing node.
+
+![Gaia-core in processing+web node](doc/imgs/gaia-core-on-processing_web_node.png "Gaia-core")
+
+
 ## Projects
 
 ### Global Meteor Network
