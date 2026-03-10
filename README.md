@@ -31,6 +31,9 @@ This is a do-over of the BirdNetPi which will use one or multiple microphones to
 
 These are the containers for it. https://hub.docker.com/r/fede2/gaia-capture, https://hub.docker.com/r/fede2/gaia-web and https://hub.docker.com/r/fede2/gaia-processing with source here https://github.com/fede2cr/gaia-audio
 
+![Gaia-audio species view](doc/imgs/gaia-audio-species.png "Gaia-audio species")
+
+
 ### Gaia radio
 
 This project uses an SDR to listen to ADS-B and other sources of aircraft telemetry to graph passing airplanes that will not only make it easier for GMN processing nodes to mark at planes and con-trails, but also estimate the CO2 of each of the detected planes based on the average of fuel per km of each aircraft type.

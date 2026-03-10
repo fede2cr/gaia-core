@@ -6,8 +6,9 @@ use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
-    get_audio_models, get_debug_settings, get_location, get_processing_threads, get_projects,
-    set_location, set_processing_threads, toggle_audio_model, toggle_debug_logging, DebugState,
+    get_audio_models, get_debug_settings, get_location, get_node_name, get_processing_threads,
+    get_projects, set_location, set_node_name, set_processing_threads, toggle_audio_model,
+    toggle_debug_logging, DebugState,
 };
 
 /// Settings page showing current proxy configuration, port assignments,
@@ -132,6 +133,14 @@ pub fn SettingsPage() -> impl IntoView {
             </p>
             <LocationForm/>
 
+            // ── Node Name ────────────────────────────────────────────
+            <h2>"Node Name"</h2>
+            <p class="page-description">
+                "A friendly identifier for this station, shown in all web interfaces "
+                "instead of the IP address. Falls back to the system hostname when empty."
+            </p>
+            <NodeNameSettings/>
+
             // ── Audio Models ─────────────────────────────────────────
             <h2>"Audio Models"</h2>
             <p class="page-description">
@@ -249,7 +258,74 @@ fn LocationForm() -> impl IntoView {
     }
 }
 
-/// Audio model toggles for the Settings page.
+/// Node Name input — a friendly identifier for this station.
+#[component]
+fn NodeNameSettings() -> impl IntoView {
+    let name_res = create_resource(|| (), |_| get_node_name());
+    let (name, set_name) = create_signal(String::new());
+    let (status_msg, set_status) = create_signal(Option::<String>::None);
+
+    let save_action = create_action(move |val: &String| {
+        let val = val.clone();
+        async move { set_node_name(val).await }
+    });
+
+    create_effect(move |_| {
+        if let Some(Ok(n)) = name_res.get() {
+            set_name.set(n);
+        }
+    });
+
+    create_effect(move |_| {
+        if let Some(result) = save_action.value().get() {
+            match result {
+                Ok(n) => {
+                    set_name.set(n);
+                    set_status.set(Some("Saved. Restart containers to apply.".into()));
+                }
+                Err(e) => set_status.set(Some(format!("Error: {e}"))),
+            }
+        }
+    });
+
+    let on_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        set_status.set(None);
+        save_action.dispatch(name.get());
+    };
+
+    view! {
+        <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+            <form class="location-form" on:submit=on_submit>
+                <div class="location-fields">
+                    <label class="location-label">
+                        "Name"
+                        <input
+                            type="text"
+                            class="location-input"
+                            placeholder="e.g. garden-station"
+                            prop:value=name
+                            on:input=move |ev| set_name.set(event_target_value(&ev))
+                        />
+                    </label>
+                    <button type="submit" class="location-save-btn"
+                        disabled=move || save_action.pending().get()
+                    >
+                        {move || if save_action.pending().get() { "Saving..." } else { "Save" }}
+                    </button>
+                </div>
+                {move || status_msg.get().map(|msg| {
+                    let cls = if msg.starts_with("Error") {
+                        "location-status location-error"
+                    } else {
+                        "location-status location-ok"
+                    };
+                    view! { <p class=cls>{msg}</p> }
+                })}
+            </form>
+        </Suspense>
+    }
+}/// Audio model toggles for the Settings page.
 #[component]
 fn AudioModelSettings() -> impl IntoView {
     let models = create_resource(|| (), |_| get_audio_models());

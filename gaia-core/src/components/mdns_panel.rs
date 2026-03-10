@@ -102,7 +102,7 @@ fn NodeRow(
             <div class="device-info">
                 <span class="device-label">{&node.instance}</span>
                 <span class="device-meta">
-                    {&node.host} ":" {node.port}
+                    {&node.hostname}
                     " · " <code>{&node.service_type}</code>
                 </span>
             </div>

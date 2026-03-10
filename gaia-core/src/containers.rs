@@ -472,6 +472,15 @@ pub async fn start(name: &str) -> Result<(), String> {
         }
     }
 
+    // Node name — inject a human-friendly identifier so web UIs and
+    // processing servers can display it instead of an IP address.
+    if let Ok(Some(node_name)) = crate::db::get_setting("node_name").await {
+        if !node_name.is_empty() {
+            args.push("-e".into());
+            args.push(format!("NODE_NAME={node_name}"));
+        }
+    }
+
     // Device mappings
     for d in &spec.devices {
         args.push("--device".into());

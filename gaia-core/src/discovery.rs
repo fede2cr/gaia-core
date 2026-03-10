@@ -23,8 +23,10 @@ pub struct MdnsNode {
     pub service_type: String,
     /// Instance name advertised by the node.
     pub instance: String,
-    /// Hostname or IP address.
+    /// IP address of the node.
     pub host: String,
+    /// mDNS hostname (e.g. `gaia-station-01.local`).
+    pub hostname: String,
     /// TCP port the service listens on.
     pub port: u16,
     /// Which Gaia project this belongs to.
@@ -184,8 +186,8 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
     // Parsable format:  =;iface;protocol;name;type;domain;hostname;addr;port;txt
     //
     // A service can appear multiple times (IPv4 + IPv6, multiple
-    // interfaces).  We keep only Gaia-related entries and prefer IPv4
-    // per (instance, type).
+    // interfaces).  We only keep IPv4 entries (IPv6 link-local
+    // addresses with %iface suffixes are problematic).
 
     let mut best: HashMap<(String, String), MdnsNode> = HashMap::new();
 
@@ -199,8 +201,16 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
         }
 
         let protocol = fields[2]; // "IPv4" or "IPv6"
+
+        // Skip IPv6 entirely — link-local addresses with %iface
+        // suffixes cause connectivity issues.
+        if protocol == "IPv6" {
+            continue;
+        }
+
         let instance_raw = fields[3];
         let stype = fields[4].to_string();
+        let hostname = fields[6].trim_end_matches('.').to_string();
         let host = fields[7].to_string();
         let port = fields[8].parse::<u16>().unwrap_or(0);
 
@@ -216,20 +226,13 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
 
         let key = (instance.clone(), stype.clone());
 
-        // Prefer IPv4 over IPv6 (avoids link-local %iface issues).
-        if let Some(existing) = best.get(&key) {
-            if protocol == "IPv4" && existing.host.contains(':') {
-                tracing::debug!(
-                    "mDNS: upgrading {instance} ({stype}) from IPv6 to IPv4 ({host})"
-                );
-            } else {
-                continue; // keep existing
-            }
-        } else {
-            tracing::info!(
-                "mDNS discovered: {instance} ({stype}) at {host}:{port} [{protocol}]"
-            );
+        if best.contains_key(&key) {
+            continue; // keep first entry per (instance, type)
         }
+
+        tracing::info!(
+            "mDNS discovered: {instance} ({stype}) at {hostname} ({host}:{port})"
+        );
 
         best.insert(
             key,
@@ -237,6 +240,7 @@ async fn browse_all() -> Result<Vec<MdnsNode>, String> {
                 service_type: stype,
                 instance,
                 host,
+                hostname,
                 port,
                 project_slug,
             },

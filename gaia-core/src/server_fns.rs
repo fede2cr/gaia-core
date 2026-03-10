@@ -7,6 +7,25 @@ use serde::{Deserialize, Serialize};
 pub use crate::config::ProjectTarget;
 pub use crate::config::AudioProcessingNode;
 
+/// Read the system hostname (best-effort).
+///
+/// Tries `$HOSTNAME` env var first, then `/etc/hostname`, then `"unknown"`.
+#[cfg(feature = "ssr")]
+fn system_hostname() -> String {
+    if let Ok(h) = std::env::var("HOSTNAME") {
+        if !h.is_empty() {
+            return h;
+        }
+    }
+    if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
+        let h = h.trim().to_string();
+        if !h.is_empty() {
+            return h;
+        }
+    }
+    "unknown".into()
+}
+
 /// A hardware device detected on the local host.
 /// (Mirrors `hardware::HwDevice` but is always compiled for both targets.)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,6 +43,7 @@ pub struct MdnsNode {
     pub service_type: String,
     pub instance: String,
     pub host: String,
+    pub hostname: String,
     pub port: u16,
     pub project_slug: String,
 }
@@ -53,6 +73,7 @@ pub async fn discover_nodes() -> Result<Vec<MdnsNode>, ServerFnError> {
             service_type: n.service_type,
             instance: n.instance,
             host: n.host,
+            hostname: n.hostname,
             port: n.port,
             project_slug: n.project_slug,
         })
@@ -329,6 +350,35 @@ pub async fn set_processing_threads(threads: u32) -> Result<u32, ServerFnError> 
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
     tracing::info!("Processing threads updated to {threads}");
     Ok(threads)
+}
+
+// ── Node Name ────────────────────────────────────────────────────────────
+
+/// Get the configured friendly node name.
+/// Falls back to the system hostname when no name has been set.
+#[server(GetNodeName, "/api")]
+pub async fn get_node_name() -> Result<String, ServerFnError> {
+    let val = crate::db::get_setting("node_name")
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    match val {
+        Some(v) if !v.is_empty() => Ok(v),
+        _ => {
+            // Fall back to system hostname.
+            Ok(system_hostname())
+        }
+    }
+}
+
+/// Set the friendly node name.
+#[server(SetNodeName, "/api")]
+pub async fn set_node_name(name: String) -> Result<String, ServerFnError> {
+    let trimmed = name.trim().to_string();
+    crate::db::set_setting("node_name", &trimmed)
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    tracing::info!("Node name updated to '{trimmed}'");
+    Ok(trimmed)
 }
 
 /// Assign a device to a project (or "none" to un-assign).
