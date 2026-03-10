@@ -103,6 +103,13 @@ pub fn default_audio_models() -> Vec<AudioModel> {
             enabled: false,
             container_kind: "processing:batdetect2".into(),
         },
+        AudioModel {
+            slug: "birdnet3".into(),
+            name: "BirdNET+ V3.0".into(),
+            description: "Bird song classification -- ~11,000 species (birds + expanded non-bird taxa)".into(),
+            enabled: false,
+            container_kind: "processing:birdnet3".into(),
+        },
     ]
 }
 
