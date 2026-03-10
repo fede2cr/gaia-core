@@ -930,6 +930,13 @@ async fn validate_audio_processing(name: &str) {
         // Podman sends container logs to stderr for some log drivers.
         let combined = format!("{logs}{stderr_logs}");
 
+        // Guard: if the container was stopped while we were waiting,
+        // don't overwrite the "stopped" status.
+        if !is_running(name).await {
+            tracing::info!("[{name}] Container stopped during validation, aborting");
+            return;
+        }
+
         if combined.contains("Model ready:") {
             tracing::info!("[{name}] Model loaded successfully");
             set_status(name, "running");

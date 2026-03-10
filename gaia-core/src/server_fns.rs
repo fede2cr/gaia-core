@@ -515,7 +515,9 @@ pub async fn toggle_audio_model(
         crate::db::set_container_enabled("audio", &kind, false)
             .await
             .ok();
-        let _ = crate::containers::stop(&name).await;
+        if let Err(e) = crate::containers::stop(&name).await {
+            tracing::error!("Failed to stop container '{name}' for audio model '{slug}': {e}");
+        }
         tracing::info!("Disabled audio model '{slug}' and stopped container '{name}'");
     } else {
         tracing::info!("Enabled audio model '{slug}'");
@@ -546,7 +548,9 @@ pub async fn toggle_audio_processing(
             }
         });
     } else {
-        let _ = crate::containers::stop(&name).await;
+        if let Err(e) = crate::containers::stop(&name).await {
+            tracing::error!("Failed to stop container '{name}': {e}");
+        }
     }
 
     tracing::info!(
@@ -677,7 +681,9 @@ pub async fn toggle_light_model(
         crate::db::set_container_enabled("light", &kind, false)
             .await
             .ok();
-        let _ = crate::containers::stop(&name).await;
+        if let Err(e) = crate::containers::stop(&name).await {
+            tracing::error!("Failed to stop container '{name}' for light model '{slug}': {e}");
+        }
         tracing::info!("Disabled light model '{slug}' and stopped container '{name}'");
     } else {
         tracing::info!("Enabled light model '{slug}'");
@@ -706,7 +712,9 @@ pub async fn toggle_light_processing(
             }
         });
     } else {
-        let _ = crate::containers::stop(&name).await;
+        if let Err(e) = crate::containers::stop(&name).await {
+            tracing::error!("Failed to stop container '{name}': {e}");
+        }
     }
 
     tracing::info!(
