@@ -43,7 +43,10 @@ async fn main() {
     // Spawned in background so the web UI starts immediately.
     // Container lifecycle statuses are tracked and polled by the dashboard.
     tokio::spawn(gaia_core::containers::sync_with_db());
-
+    // ── Background container update checker ──────────────────────────
+    // Periodically compares local vs Docker Hub digests and stores
+    // results in-memory for the UI to poll.
+    gaia_core::updates::spawn_background_loop();
     // ── Proxy targets (with persisted container states) ──────────────────
     let mut targets = config::default_targets();
     if let Ok(states) = gaia_core::db::all_container_states().await {

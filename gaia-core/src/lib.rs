@@ -14,6 +14,7 @@ cfg_if::cfg_if! {
         pub mod discovery;
         pub mod hardware;
         pub mod proxy;
+        pub mod updates;
     }
 }
 

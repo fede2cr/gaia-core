@@ -6,9 +6,10 @@ use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
-    get_audio_models, get_debug_settings, get_location, get_node_name, get_processing_threads,
-    get_projects, set_location, set_node_name, set_processing_threads, toggle_audio_model,
-    toggle_debug_logging, DebugState,
+    check_for_updates, get_audio_models, get_debug_settings, get_location, get_node_name,
+    get_processing_threads, get_projects, get_update_check_interval, get_update_status,
+    set_location, set_node_name, set_processing_threads, set_update_check_interval,
+    toggle_audio_model, toggle_debug_logging, DebugState, ImageUpdate,
 };
 
 /// Settings page showing current proxy configuration, port assignments,
@@ -167,6 +168,14 @@ pub fn SettingsPage() -> impl IntoView {
                 "disk space not being freed. Takes effect on the next container restart."
             </p>
             <DebugLoggingSettings/>
+
+            // ── Container Updates ────────────────────────────────────
+            <h2>"Container Updates"</h2>
+            <p class="page-description">
+                "Periodically checks Docker Hub for newer container images. "
+                "Set the automatic check interval, or use the manual button for development."
+            </p>
+            <UpdateCheckSettings/>
 
             // ── Hardware & Network Discovery ────────────────────────
             <h2>"Hardware & Network"</h2>
@@ -528,6 +537,184 @@ fn ProcessingThreadsSettings() -> impl IntoView {
                     view! { <p class=cls>{msg}</p> }
                 })}
             </form>
+        </Suspense>
+    }
+}
+
+/// Container update check: interval setting, "Check Now" button, and results list.
+#[component]
+fn UpdateCheckSettings() -> impl IntoView {
+    // ── Interval setting ─────────────────────────────────────────────
+    let interval_res = create_resource(|| (), |_| get_update_check_interval());
+    let (interval, set_interval_val) = create_signal(24u64);
+    let (interval_msg, set_interval_msg) = create_signal(Option::<String>::None);
+
+    let save_interval = create_action(move |val: &u64| {
+        let val = *val;
+        async move { set_update_check_interval(val).await }
+    });
+
+    create_effect(move |_| {
+        if let Some(Ok(n)) = interval_res.get() {
+            set_interval_val.set(n);
+        }
+    });
+
+    create_effect(move |_| {
+        if let Some(result) = save_interval.value().get() {
+            match result {
+                Ok(n) => {
+                    set_interval_val.set(n);
+                    set_interval_msg.set(Some(format!("Saved ({n}h). Takes effect on next cycle.")));
+                }
+                Err(e) => set_interval_msg.set(Some(format!("Error: {e}"))),
+            }
+        }
+    });
+
+    let on_interval_submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        set_interval_msg.set(None);
+        save_interval.dispatch(interval.get());
+    };
+
+    // ── Manual check ─────────────────────────────────────────────────
+    let (updates, set_updates) = create_signal(Vec::<ImageUpdate>::new());
+    let (check_msg, set_check_msg) = create_signal(Option::<String>::None);
+
+    // Load cached status on page load.
+    let status_res = create_resource(|| (), |_| get_update_status());
+    create_effect(move |_| {
+        if let Some(Ok(list)) = status_res.get() {
+            set_updates.set(list);
+        }
+    });
+
+    let check_action = create_action(move |_: &()| async move {
+        check_for_updates().await
+    });
+
+    create_effect(move |_| {
+        if let Some(result) = check_action.value().get() {
+            match result {
+                Ok(list) => {
+                    let n = list.iter().filter(|u| u.has_update).count();
+                    set_check_msg.set(Some(format!(
+                        "Check complete: {n} update(s) available."
+                    )));
+                    set_updates.set(list);
+                }
+                Err(e) => set_check_msg.set(Some(format!("Error: {e}"))),
+            }
+        }
+    });
+
+    view! {
+        <Suspense fallback=move || view! { <p>"Loading..."</p> }>
+            // Interval form
+            <form class="location-form" on:submit=on_interval_submit>
+                <div class="location-fields">
+                    <label class="location-label">
+                        "Check interval (hours)"
+                        <input
+                            type="number"
+                            class="location-input"
+                            min="1"
+                            max="168"
+                            prop:value=move || interval.get().to_string()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<u64>() {
+                                    set_interval_val.set(v.max(1).min(168));
+                                }
+                            }
+                        />
+                    </label>
+                    <button type="submit" class="location-save-btn"
+                        disabled=move || save_interval.pending().get()
+                    >
+                        {move || if save_interval.pending().get() { "Saving..." } else { "Save" }}
+                    </button>
+                    <button type="button" class="location-save-btn update-check-btn"
+                        disabled=move || check_action.pending().get()
+                        on:click=move |_| check_action.dispatch(())
+                    >
+                        {move || if check_action.pending().get() {
+                            "Checking..."
+                        } else {
+                            "Check Now"
+                        }}
+                    </button>
+                </div>
+                {move || interval_msg.get().map(|msg| {
+                    let cls = if msg.starts_with("Error") {
+                        "location-status location-error"
+                    } else {
+                        "location-status location-ok"
+                    };
+                    view! { <p class=cls>{msg}</p> }
+                })}
+                {move || check_msg.get().map(|msg| {
+                    let cls = if msg.starts_with("Error") {
+                        "location-status location-error"
+                    } else {
+                        "location-status location-ok"
+                    };
+                    view! { <p class=cls>{msg}</p> }
+                })}
+            </form>
+
+            // Update results list
+            {move || {
+                let list = updates.get();
+                if list.is_empty() {
+                    view! {
+                        <p class="empty-state">"No update data yet. Click \"Check Now\" or wait for the next scheduled check."</p>
+                    }.into_view()
+                } else {
+                    let has_any = list.iter().any(|u| u.has_update);
+                    view! {
+                        <div class="update-results">
+                            {if has_any {
+                                view! {
+                                    <p class="update-summary update-available">
+                                        "⬆ Updates available for some containers. "
+                                        "Restart them from the Dashboard to pull the latest images."
+                                    </p>
+                                }.into_view()
+                            } else {
+                                view! {
+                                    <p class="update-summary update-current">
+                                        "✓ All container images are up to date."
+                                    </p>
+                                }.into_view()
+                            }}
+                            <div class="update-list">
+                                {list.into_iter().map(|u| {
+                                    let badge_cls = if u.has_update {
+                                        "update-badge update-badge-new"
+                                    } else {
+                                        "update-badge update-badge-ok"
+                                    };
+                                    let badge_text = if u.has_update { "Update" } else { "Current" };
+                                    view! {
+                                        <div class="update-row">
+                                            <span class="update-container-name">{&u.container}</span>
+                                            <span class=badge_cls>{badge_text}</span>
+                                            <span class="update-last-checked">
+                                                {if u.last_checked == "unknown" {
+                                                    String::new()
+                                                } else {
+                                                    format!("checked {}", u.last_checked)
+                                                }}
+                                            </span>
+                                        </div>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        </div>
+                    }.into_view()
+                }
+            }}
         </Suspense>
     }
 }

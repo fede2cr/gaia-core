@@ -858,3 +858,76 @@ pub async fn get_capture_health() -> Result<Vec<CaptureHealth>, ServerFnError> {
 
     Ok(results)
 }
+
+// ── Container image updates ──────────────────────────────────────────────
+
+/// Update status for a single container image (shared SSR + WASM type).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ImageUpdate {
+    pub container: String,
+    pub image: String,
+    pub has_update: bool,
+    pub last_checked: String,
+}
+
+/// Get the cached update status for all container images.
+///
+/// Returns one entry per container.  `has_update` is `true` when the
+/// remote Docker Hub digest differs from the locally-pulled one.
+#[server(GetUpdateStatus, "/api")]
+pub async fn get_update_status() -> Result<Vec<ImageUpdate>, ServerFnError> {
+    let statuses = crate::updates::all_update_statuses().await;
+    Ok(statuses
+        .into_iter()
+        .map(|s| ImageUpdate {
+            container: s.container,
+            image: s.image,
+            has_update: s.has_update,
+            last_checked: s.last_checked,
+        })
+        .collect())
+}
+
+/// Get the number of images that have updates available.
+#[server(GetUpdateCount, "/api")]
+pub async fn get_update_count() -> Result<usize, ServerFnError> {
+    Ok(crate::updates::update_count().await)
+}
+
+/// Manually trigger an update check (for development / impatient users).
+///
+/// Returns the fresh status list.
+#[server(CheckForUpdates, "/api")]
+pub async fn check_for_updates() -> Result<Vec<ImageUpdate>, ServerFnError> {
+    let statuses = crate::updates::check_all().await;
+    Ok(statuses
+        .into_iter()
+        .map(|s| ImageUpdate {
+            container: s.container,
+            image: s.image,
+            has_update: s.has_update,
+            last_checked: s.last_checked,
+        })
+        .collect())
+}
+
+/// Get the update check interval in hours.
+#[server(GetUpdateCheckInterval, "/api")]
+pub async fn get_update_check_interval() -> Result<u64, ServerFnError> {
+    let val = crate::db::get_setting("update_check_interval")
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?
+        .unwrap_or_default();
+    Ok(val.parse::<u64>().unwrap_or(24).max(1))
+}
+
+/// Set the update check interval in hours.
+#[server(SetUpdateCheckInterval, "/api")]
+pub async fn set_update_check_interval(hours: u64) -> Result<u64, ServerFnError> {
+    let hours = hours.max(1).min(168); // 1h to 1 week
+    crate::db::set_setting("update_check_interval", &hours.to_string())
+        .await
+        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    tracing::info!("Update check interval set to {hours}h");
+    Ok(hours)
+}

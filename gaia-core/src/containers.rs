@@ -62,7 +62,7 @@ pub async fn runtime() -> Runtime {
     rt
 }
 
-fn runtime_cmd(rt: Runtime) -> &'static str {
+pub fn runtime_cmd(rt: Runtime) -> &'static str {
     match rt {
         Runtime::Podman => "podman",
         Runtime::Docker => "docker",
@@ -80,8 +80,8 @@ const CONFIG_PATH: &str = "containers.toml";
 /// Loaded from `containers.toml` (or built-in defaults).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
-struct ContainerSpec {
-    image: String,
+pub struct ContainerSpec {
+    pub image: String,
     #[serde(default)]
     env: Vec<String>,
     #[serde(default)]
@@ -127,9 +127,9 @@ impl Default for ContainerSpec {
 /// group_add = ["audio"]
 /// ```
 #[derive(Clone, Debug, Default, Deserialize)]
-struct ContainerConfig {
+pub struct ContainerConfig {
     #[serde(flatten)]
-    containers: HashMap<String, ContainerSpec>,
+    pub containers: HashMap<String, ContainerSpec>,
 }
 
 /// Cached config loaded once at startup.
@@ -166,7 +166,7 @@ fn load_config() -> ContainerConfig {
 }
 
 /// Get the (cached) container config.
-fn config() -> &'static ContainerConfig {
+pub fn config() -> &'static ContainerConfig {
     CONFIG.get_or_init(load_config)
 }
 
