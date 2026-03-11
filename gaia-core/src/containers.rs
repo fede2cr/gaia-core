@@ -424,7 +424,15 @@ pub async fn start(name: &str) -> Result<(), String> {
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
-    let spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
+    let mut spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
+
+    // For processing containers, detect ROCm hardware early so we can
+    // switch to the `:rocm` image variant *before* pulling.
+    let use_rocm = is_rocm_container(name) && detect_rocm_available().await;
+    if use_rocm {
+        spec.image = rocm_image_tag(&spec.image);
+        tracing::info!("ROCm hardware detected — using image {}", spec.image);
+    }
 
     // 1. Pull the latest image.
     set_status(name, "pulling");
@@ -519,7 +527,9 @@ pub async fn start(name: &str) -> Result<(), String> {
         };
         build_audio_processing_args(&mut args, &model_slug).await;
         // Inject ROCm GPU passthrough if hardware is available.
-        maybe_inject_rocm_args(&mut args).await;
+        if use_rocm {
+            inject_rocm_args(&mut args).await;
+        }
     }
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
@@ -539,7 +549,9 @@ pub async fn start(name: &str) -> Result<(), String> {
             .to_string();
         build_light_processing_args(&mut args, &model_slug).await;
         // Inject ROCm GPU passthrough if hardware is available.
-        maybe_inject_rocm_args(&mut args).await;
+        if use_rocm {
+            inject_rocm_args(&mut args).await;
+        }
     }
     // Image (must be last)
     args.push(spec.image);
@@ -812,26 +824,57 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
-/// Detect ROCm-capable AMD GPUs and inject device passthrough + env vars
-/// into the container `run` arguments.
+/// Returns `true` for container names that should use the ROCm image
+/// variant when GPU hardware is available.
+pub fn is_rocm_container(name: &str) -> bool {
+    name.starts_with("gaia-audio-processing") || name.starts_with("gaia-light-processing")
+}
+
+/// Probe whether ROCm-capable AMD GPUs are present on the host.
+pub async fn detect_rocm_available() -> bool {
+    let gpus = crate::hardware::detect_gpus().await;
+    if gpus.is_empty() {
+        tracing::debug!("detect_rocm_available: no GPUs detected");
+        return false;
+    }
+    tracing::debug!("detect_rocm_available: {} GPU(s) found", gpus.len());
+    true
+}
+
+/// Append a `:rocm` tag to a container image reference.
+///
+/// If the image already has a tag (e.g. `:latest`) it is replaced.
+/// Otherwise `:rocm` is appended.
+pub fn rocm_image_tag(image: &str) -> String {
+    // Images look like "docker.io/fede2/gaia-audio-processing" (no tag)
+    // or "docker.io/fede2/gaia-audio-processing:latest".
+    // We need "docker.io/fede2/gaia-audio-processing:rocm".
+    if let Some(base) = image.rsplit_once(':') {
+        // Only treat it as a tag if the part after ':' has no '/' (not a
+        // port in a registry URL like localhost:5000/foo).
+        if !base.1.contains('/') {
+            return format!("{}:rocm", base.0);
+        }
+    }
+    format!("{image}:rocm")
+}
+
+/// Inject ROCm device passthrough + environment variables into
+/// container `run` arguments.
 ///
 /// When ROCm hardware is found (`/dev/kfd` + amdgpu render nodes in
 /// `/dev/dri/`), the following are added:
 ///
 ///   - `--device /dev/kfd` — Kernel Fusion Driver (shared by all GPUs)
 ///   - `--device /dev/dri` — DRM render/card nodes
-///   - `--group-add video` — required for GPU device access
+///   - `--group-add <GID>` — numeric GIDs for GPU device access (when resolvable)
 ///   - `-e GAIA_ACCEL=rocm` — signals the processing binary to use MIGraphX
 ///   - `--security-opt label=disable` — needed for GPU access under SELinux
 ///
-/// If no AMD GPUs are found this is a no-op.
-async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
-    tracing::debug!("maybe_inject_rocm_args: running GPU detection");
+/// The caller must have already verified that ROCm hardware is available
+/// (see `detect_rocm_available`).
+async fn inject_rocm_args(args: &mut Vec<String>) {
     let gpus = crate::hardware::detect_gpus().await;
-    if gpus.is_empty() {
-        tracing::debug!("maybe_inject_rocm_args: no GPUs detected — skipping injection");
-        return;
-    }
 
     tracing::info!(
         "ROCm acceleration available — injecting GPU passthrough for {} GPU(s)",
@@ -896,7 +939,7 @@ async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
     args.push(format!("ROCM_VISIBLE_DEVICES={}", render_nodes.join(",")));
 
     tracing::debug!(
-        "maybe_inject_rocm_args: injected env GAIA_ACCEL=rocm ROCM_VISIBLE_DEVICES={}",
+        "inject_rocm_args: injected env GAIA_ACCEL=rocm ROCM_VISIBLE_DEVICES={}",
         render_nodes.join(",")
     );
 }

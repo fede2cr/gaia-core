@@ -94,14 +94,25 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
     // Collect unique images only for containers that are currently running.
     // Stopped containers will pull the latest image on next start, so
     // there is no need to query the registry for them.
+    //
+    // For processing containers running on ROCm hardware, the actual
+    // image in use is the `:rocm` tagged variant, so we resolve that
+    // here to match what was pulled at start time.
+    let use_rocm = crate::containers::detect_rocm_available().await;
+
     let mut image_to_containers: HashMap<String, Vec<String>> = HashMap::new();
     for (name, spec) in &cfg.containers {
         let status = crate::containers::get_status(name);
         if status != "running" {
             continue;
         }
+        let image = if use_rocm && crate::containers::is_rocm_container(name) {
+            crate::containers::rocm_image_tag(&spec.image)
+        } else {
+            spec.image.clone()
+        };
         image_to_containers
-            .entry(spec.image.clone())
+            .entry(image)
             .or_default()
             .push(name.clone());
     }
