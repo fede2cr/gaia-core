@@ -848,29 +848,31 @@ async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
     args.push("/dev/dri".into());
 
     // Add the supplementary groups required for GPU device access.
-    // We resolve GIDs from the actual device nodes rather than using
-    // group names like "video" / "render", because those names may not
-    // exist inside the container image's /etc/group.
+    // We resolve numeric GIDs from the actual device nodes because the
+    // group *names* (video, render) may not exist in the target
+    // container's /etc/group, causing podman to reject them.
+    //
+    // When gaia-core itself runs in a container the host /dev nodes are
+    // not directly visible, so stat may fail.  In that case we skip
+    // --group-add entirely: the processing containers run as root and
+    // --device + --security-opt label=disable is sufficient for access.
     let mut gids = std::collections::BTreeSet::new();
-    if let Ok(meta) = tokio::fs::metadata("/dev/kfd").await {
-        use std::os::unix::fs::MetadataExt;
-        gids.insert(meta.gid());
-    }
-    // Also grab the GID of the first render node (usually the "render" group).
-    if let Some(rn) = gpus.first() {
-        if let Ok(meta) = tokio::fs::metadata(&rn.render_node).await {
+    for path in std::iter::once("/dev/kfd".to_string())
+        .chain(gpus.iter().map(|g| g.render_node.clone()))
+    {
+        if let Ok(meta) = tokio::fs::metadata(&path).await {
             use std::os::unix::fs::MetadataExt;
-            gids.insert(meta.gid());
+            let gid = meta.gid();
+            if gid != 0 {
+                gids.insert(gid);
+            }
         }
     }
-    // Fallback: use well-known names if we couldn't stat the devices
-    // (e.g. /dev/kfd not bind-mounted into gaia-core).
     if gids.is_empty() {
-        tracing::debug!("Could not stat GPU device nodes for GIDs — falling back to group names");
-        args.push("--group-add".into());
-        args.push("video".into());
-        args.push("--group-add".into());
-        args.push("render".into());
+        tracing::debug!(
+            "Could not resolve GPU device GIDs (host /dev not visible) — \
+             skipping --group-add (root containers have device access via --device)"
+        );
     } else {
         for gid in &gids {
             tracing::debug!("Adding supplementary GID {gid} for GPU access");
