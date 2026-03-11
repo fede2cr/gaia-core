@@ -427,9 +427,10 @@ pub async fn start(name: &str) -> Result<(), String> {
     let mut spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
 
     // For processing containers, detect ROCm hardware early so we can
-    // switch to the `:rocm` image variant *before* pulling.
-    let use_rocm = is_rocm_container(name) && detect_rocm_available().await;
-    if use_rocm {
+    // switch to the `:rocm` image variant *before* pulling, and/or
+    // inject GPU passthrough arguments.
+    let rocm_available = wants_rocm_passthrough(name) && detect_rocm_available().await;
+    if rocm_available && has_rocm_image(name) {
         spec.image = rocm_image_tag(&spec.image);
         tracing::info!("ROCm hardware detected — using image {}", spec.image);
     }
@@ -527,7 +528,7 @@ pub async fn start(name: &str) -> Result<(), String> {
         };
         build_audio_processing_args(&mut args, &model_slug).await;
         // Inject ROCm GPU passthrough if hardware is available.
-        if use_rocm {
+        if rocm_available {
             inject_rocm_args(&mut args).await;
         }
     }
@@ -549,7 +550,7 @@ pub async fn start(name: &str) -> Result<(), String> {
             .to_string();
         build_light_processing_args(&mut args, &model_slug).await;
         // Inject ROCm GPU passthrough if hardware is available.
-        if use_rocm {
+        if rocm_available {
             inject_rocm_args(&mut args).await;
         }
     }
@@ -824,9 +825,21 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
-/// Returns `true` for container names that should use the ROCm image
+/// Returns `true` for container names that should use the `:rocm` image
 /// variant when GPU hardware is available.
-pub fn is_rocm_container(name: &str) -> bool {
+///
+/// Only containers that publish a `:rocm` tagged image on the registry
+/// should be listed here.  Containers that benefit from GPU passthrough
+/// but don't have a separate `:rocm` image (e.g. `gaia-light-processing`)
+/// should only appear in [`wants_rocm_passthrough`].
+pub fn has_rocm_image(name: &str) -> bool {
+    name.starts_with("gaia-audio-processing")
+}
+
+/// Returns `true` for containers that benefit from ROCm GPU passthrough
+/// (device mappings, env vars) regardless of whether they use a special
+/// `:rocm` image variant.
+pub fn wants_rocm_passthrough(name: &str) -> bool {
     name.starts_with("gaia-audio-processing") || name.starts_with("gaia-light-processing")
 }
 

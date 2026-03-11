@@ -106,7 +106,7 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
         if status != "running" {
             continue;
         }
-        let image = if use_rocm && crate::containers::is_rocm_container(name) {
+        let image = if use_rocm && crate::containers::has_rocm_image(name) {
             crate::containers::rocm_image_tag(&spec.image)
         } else {
             spec.image.clone()
