@@ -19,6 +19,11 @@ services:
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
       - /proc/asound:/proc/asound:ro
       - /dev/snd:/dev/snd
+      # GPU detection: mount host sysfs so gaia-core can discover AMD
+      # GPUs and inject ROCm passthrough for processing containers.
+      # gaia-core itself doesn't use the GPU — it only reads sysfs
+      # metadata.  /dev/kfd and /dev/dri are optional (see setup-host.sh).
+      - /sys:/sys:ro
     environment:
       - GAIA_AUDIO_URL=http://localhost:3000
       - GAIA_RADIO_URL=http://localhost:8080

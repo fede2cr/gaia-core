@@ -380,19 +380,25 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
 pub async fn detect_gpus() -> Vec<GpuInfo> {
     tracing::debug!("GPU detection: starting scan");
 
-    // ROCm requires /dev/kfd — if it's missing, there's no ROCm stack.
-    let kfd_exists = tokio::fs::try_exists("/dev/kfd").await.unwrap_or(false);
-    tracing::debug!("GPU detection: /dev/kfd exists = {kfd_exists}");
-    if !kfd_exists {
-        tracing::info!("No /dev/kfd — ROCm not available");
-        return vec![];
-    }
+    // Check for the ROCm / KFD kernel module.
+    //
+    // We check multiple indicators because gaia-core runs inside a
+    // container that may not have /dev/kfd mapped but can still see
+    // the host sysfs when /sys is bind-mounted read-only.
+    //
+    // 1. /dev/kfd            – direct device node (on host or if passed through)
+    // 2. /sys/class/kfd      – KFD class in sysfs (visible with /sys mount)
+    // 3. /sys/module/amdgpu  – amdgpu kernel module loaded
+    let dev_kfd = tokio::fs::try_exists("/dev/kfd").await.unwrap_or(false);
+    let sys_kfd = tokio::fs::try_exists("/sys/class/kfd").await.unwrap_or(false);
+    let sys_amdgpu = tokio::fs::try_exists("/sys/module/amdgpu").await.unwrap_or(false);
+    tracing::debug!(
+        "GPU detection: /dev/kfd={dev_kfd} /sys/class/kfd={sys_kfd} /sys/module/amdgpu={sys_amdgpu}"
+    );
 
-    // Also check that /dev/dri exists.
-    let dri_exists = tokio::fs::try_exists("/dev/dri").await.unwrap_or(false);
-    tracing::debug!("GPU detection: /dev/dri exists = {dri_exists}");
-    if !dri_exists {
-        tracing::warn!("/dev/kfd present but /dev/dri missing — cannot enumerate GPUs");
+    let has_rocm = dev_kfd || sys_kfd || sys_amdgpu;
+    if !has_rocm {
+        tracing::info!("No ROCm indicators found (/dev/kfd, /sys/class/kfd, /sys/module/amdgpu)");
         return vec![];
     }
 
