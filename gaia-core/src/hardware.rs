@@ -15,6 +15,7 @@ pub enum DeviceKind {
     Sdr,
     Microphone,
     Camera,
+    Gpu,
 }
 
 /// A detected hardware device on the local host.
@@ -27,6 +28,26 @@ pub struct HwDevice {
     pub label: String,
     /// Which Gaia project can use this device.
     pub suggested_project: String,
+}
+
+/// Acceleration backend detected on the host.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AccelBackend {
+    /// AMD ROCm (MIGraphX / HIP) — `/dev/kfd` + `/dev/dri` present.
+    Rocm,
+}
+
+/// A detected GPU with optional acceleration info.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GpuInfo {
+    /// Render node path, e.g. "/dev/dri/renderD128".
+    pub render_node: String,
+    /// Card node path, e.g. "/dev/dri/card0".
+    pub card_node: Option<String>,
+    /// Human-readable name from the driver, e.g. "AMD Radeon RX 7900 XTX".
+    pub label: String,
+    /// Detected acceleration backend.
+    pub backend: AccelBackend,
 }
 
 // ── SDR dongles ──────────────────────────────────────────────────────────
@@ -346,14 +367,141 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
     devices
 }
 
+// ── GPU / accelerator detection ──────────────────────────────────────────
+
+/// Detect AMD GPUs with ROCm support.
+///
+/// Checks for the presence of `/dev/kfd` (the ROCm kernel-mode driver)
+/// and enumerates render nodes under `/dev/dri/renderD*`.  Each render
+/// node that exposes an `amdgpu` driver via sysfs is reported.
+///
+/// The human-readable GPU name is read from the DRM subsystem or from
+/// `rocm-smi` output when available.
+pub async fn detect_gpus() -> Vec<GpuInfo> {
+    // ROCm requires /dev/kfd — if it's missing, there's no ROCm stack.
+    if !tokio::fs::try_exists("/dev/kfd").await.unwrap_or(false) {
+        tracing::debug!("No /dev/kfd — ROCm not available");
+        return vec![];
+    }
+
+    let mut gpus = Vec::new();
+
+    // Scan /sys/class/drm/ for render nodes backed by the amdgpu driver.
+    let mut entries = match tokio::fs::read_dir("/sys/class/drm").await {
+        Ok(e) => e,
+        Err(_) => return gpus,
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        // We want renderD* nodes (e.g. renderD128).
+        if !name_str.starts_with("renderD") {
+            continue;
+        }
+
+        // Verify this is an amdgpu device by reading the driver symlink.
+        let driver_link = entry.path().join("device/driver");
+        let is_amdgpu = match tokio::fs::read_link(&driver_link).await {
+            Ok(target) => target
+                .file_name()
+                .map(|f| f.to_string_lossy().contains("amdgpu"))
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if !is_amdgpu {
+            continue;
+        }
+
+        let render_node = format!("/dev/dri/{name_str}");
+
+        // Try to find the corresponding card node.
+        let render_num: Option<u32> = name_str
+            .strip_prefix("renderD")
+            .and_then(|s| s.parse().ok());
+        let card_node = render_num.map(|n| format!("/dev/dri/card{}", n - 128));
+
+        // Read the GPU product name from sysfs.
+        let label = read_gpu_label(&entry.path()).await;
+
+        gpus.push(GpuInfo {
+            render_node,
+            card_node,
+            label,
+            backend: AccelBackend::Rocm,
+        });
+    }
+
+    if !gpus.is_empty() {
+        tracing::info!(
+            "Detected {} AMD GPU(s) with ROCm support: {:?}",
+            gpus.len(),
+            gpus.iter().map(|g| &g.label).collect::<Vec<_>>()
+        );
+    }
+
+    gpus
+}
+
+/// Try to read a human-readable label for a GPU from sysfs.
+///
+/// Checks `device/product_name` first (set by some amdgpu drivers),
+/// then falls back to reading the PCI vendor/device ID and formatting it.
+async fn read_gpu_label(drm_path: &std::path::Path) -> String {
+    // Method 1: product_name (available on many amdgpu devices).
+    let product_path = drm_path.join("device/product_name");
+    if let Ok(name) = tokio::fs::read_to_string(&product_path).await {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
+    // Method 2: Build label from PCI vendor:device IDs.
+    let vendor_path = drm_path.join("device/vendor");
+    let device_path = drm_path.join("device/device");
+    let vendor = tokio::fs::read_to_string(&vendor_path)
+        .await
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let device = tokio::fs::read_to_string(&device_path)
+        .await
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if !vendor.is_empty() && !device.is_empty() {
+        return format!("AMD GPU [{vendor}:{device}]");
+    }
+
+    "AMD GPU (unknown model)".into()
+}
+
+/// Convert detected GPUs into generic `HwDevice` items for the
+/// dashboard hardware list.
+fn gpus_to_hw_devices(gpus: &[GpuInfo]) -> Vec<HwDevice> {
+    gpus.iter()
+        .map(|g| HwDevice {
+            kind: DeviceKind::Gpu,
+            id: g.render_node.clone(),
+            label: g.label.clone(),
+            suggested_project: "processing".into(),
+        })
+        .collect()
+}
+
 // ── Detect all ───────────────────────────────────────────────────────────
 
 /// Run all hardware detectors in parallel and return a combined list.
 pub async fn detect_all() -> Vec<HwDevice> {
-    let (sdrs, mics, cams) = tokio::join!(detect_sdr(), detect_microphones(), detect_cameras());
-    let mut all = Vec::with_capacity(sdrs.len() + mics.len() + cams.len());
+    let (sdrs, mics, cams, gpus) =
+        tokio::join!(detect_sdr(), detect_microphones(), detect_cameras(), detect_gpus());
+    let mut all = Vec::with_capacity(sdrs.len() + mics.len() + cams.len() + gpus.len());
     all.extend(sdrs);
     all.extend(mics);
     all.extend(cams);
+    all.extend(gpus_to_hw_devices(&gpus));
     all
 }

@@ -3,7 +3,10 @@
 use leptos::*;
 
 use crate::components::toggle::ToggleSwitch;
-use crate::server_fns::{toggle_audio_processing, toggle_container, CaptureHealth};
+use crate::server_fns::{
+    toggle_audio_processing, toggle_container, toggle_light_processing, CaptureHealth,
+    ImageUpdate,
+};
 use crate::config::AudioProcessingNode;
 
 /// Map `(slug, kind)` to the container name used by the runtime.
@@ -13,6 +16,8 @@ use crate::config::AudioProcessingNode;
 fn cname(slug: &str, kind: &str) -> String {
     if slug == "gmn" && kind == "processing" {
         "rms".into()
+    } else if let Some(model_slug) = kind.strip_prefix("processing:") {
+        format!("gaia-{slug}-processing-{model_slug}")
     } else {
         format!("gaia-{slug}-{kind}")
     }
@@ -74,6 +79,68 @@ fn DiskBadge(
             }
         }
         ().into_view()
+    }
+}
+
+/// Small badge that shows whether the camera is currently in day or
+/// night mode, based on the brightness probe reported by the capture
+/// server.
+#[component]
+fn CameraModeBadge(
+    /// Project slug used to look up capture health.
+    slug: String,
+) -> impl IntoView {
+    let health_list = use_context::<Signal<Vec<CaptureHealth>>>()
+        .unwrap_or(Signal::derive(|| vec![]));
+
+    move || {
+        let list = health_list.get();
+        let mode = list
+            .iter()
+            .find(|h| h.slug == slug)
+            .and_then(|h| h.camera_mode.clone());
+        match mode.as_deref() {
+            Some("night") => view! {
+                <span class="camera-mode-badge night" title="Camera in night / low-light mode">
+                    "🌙 Night"
+                </span>
+            }
+            .into_view(),
+            Some("day") => view! {
+                <span class="camera-mode-badge day" title="Camera in daylight mode">
+                    "☀ Day"
+                </span>
+            }
+            .into_view(),
+            _ => ().into_view(),
+        }
+    }
+}
+
+/// Small icon that indicates a container image has a pending update.
+#[component]
+fn UpdateBadge(
+    /// Container name to look up in the update status context.
+    container_name: String,
+) -> impl IntoView {
+    let update_list = use_context::<Signal<Vec<ImageUpdate>>>()
+        .unwrap_or(Signal::derive(|| vec![]));
+
+    move || {
+        let list = update_list.get();
+        let has = list
+            .iter()
+            .any(|u| u.container == container_name && u.has_update);
+        if has {
+            view! {
+                <span class="lifecycle-badge lifecycle-update" title="Image update available">
+                    "⬆ Update"
+                </span>
+            }
+            .into_view()
+        } else {
+            ().into_view()
+        }
     }
 }
 
@@ -223,16 +290,22 @@ pub fn ProjectCard(
 
     let proxy_href = format!("/proxy/{slug_for_link}/");
 
-    // Build model toggle views (audio project only).
+    // Build model toggle views (audio and light projects).
+    let slug_for_models = slug.clone();
     let model_toggle_views: Vec<_> = model_nodes
         .into_iter()
         .map(|(model_slug, model_name, container_kind, running, set_running)| {
             let model_slug_action = model_slug.clone();
+            let is_light = slug_for_models == "light";
             let model_action = create_action(move |new_state: &bool| {
                 let slug = model_slug_action.clone();
                 let new_state = *new_state;
                 async move {
-                    let _ = toggle_audio_processing(slug, new_state).await;
+                    if is_light {
+                        let _ = toggle_light_processing(slug, new_state).await;
+                    } else {
+                        let _ = toggle_audio_processing(slug, new_state).await;
+                    }
                 }
             });
 
@@ -242,8 +315,8 @@ pub fn ProjectCard(
             });
 
             // Look up lifecycle status for this model's container.
-            let model_container = cname("audio", &container_kind);
-            let model_status = lookup_status(model_container);
+            let model_container = cname(&slug_for_models, &container_kind);
+            let model_status = lookup_status(model_container.clone());
 
             let label = format!("🧠 {model_name}");
 
@@ -251,6 +324,7 @@ pub fn ProjectCard(
                 <div class="container-toggle-item">
                     <ToggleSwitch label=label checked=running on_toggle=on_model_toggle />
                     <LifecycleBadge status=model_status />
+                    <UpdateBadge container_name=model_container />
                 </div>
             }
         })
@@ -268,7 +342,9 @@ pub fn ProjectCard(
                 <div class="container-toggle-item">
                     <ToggleSwitch label="Capture".to_string() checked=capture on_toggle=on_capture />
                     <LifecycleBadge status=cap_status />
+                    <UpdateBadge container_name=cname(&slug_for_disk, "capture") />
                     <DiskBadge slug=slug_for_disk.clone() />
+                    <CameraModeBadge slug=slug_for_disk.clone() />
                 </div>
 
                 // Processing section: per-model toggles or a single toggle.
@@ -285,6 +361,7 @@ pub fn ProjectCard(
                         <div class="container-toggle-item">
                             <ToggleSwitch label="Processing".to_string() checked=processing on_toggle=on_processing />
                             <LifecycleBadge status=proc_status />
+                            <UpdateBadge container_name=cname(&slug, "processing") />
                         </div>
                     }.into_view()
                 }}
@@ -292,6 +369,7 @@ pub fn ProjectCard(
                 <div class="container-toggle-item">
                     <ToggleSwitch label="Web".to_string() checked=web on_toggle=on_web />
                     <LifecycleBadge status=web_status />
+                    <UpdateBadge container_name=cname(&slug, "web") />
                 </div>
             </div>
 

@@ -518,6 +518,8 @@ pub async fn start(name: &str) -> Result<(), String> {
                 .to_string()
         };
         build_audio_processing_args(&mut args, &model_slug).await;
+        // Inject ROCm GPU passthrough if hardware is available.
+        maybe_inject_rocm_args(&mut args).await;
     }
     if name == "gaia-gmn-config" {
         build_gmn_config_args(&mut args).await;
@@ -536,6 +538,8 @@ pub async fn start(name: &str) -> Result<(), String> {
             .unwrap_or("pytorch-wildlife")
             .to_string();
         build_light_processing_args(&mut args, &model_slug).await;
+        // Inject ROCm GPU passthrough if hardware is available.
+        maybe_inject_rocm_args(&mut args).await;
     }
     // Image (must be last)
     args.push(spec.image);
@@ -805,6 +809,60 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
     args.push(format!("MODEL_SLUGS={model_slug}"));
     args.push("-e".into());
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
+}
+
+/// Detect ROCm-capable AMD GPUs and inject device passthrough + env vars
+/// into the container `run` arguments.
+///
+/// When ROCm hardware is found (`/dev/kfd` + amdgpu render nodes in
+/// `/dev/dri/`), the following are added:
+///
+///   - `--device /dev/kfd` — Kernel Fusion Driver (shared by all GPUs)
+///   - `--device /dev/dri` — DRM render/card nodes
+///   - `--group-add video` — required for GPU device access
+///   - `-e GAIA_ACCEL=rocm` — signals the processing binary to use MIGraphX
+///   - `--security-opt label=disable` — needed for GPU access under SELinux
+///
+/// If no AMD GPUs are found this is a no-op.
+async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
+    let gpus = crate::hardware::detect_gpus().await;
+    if gpus.is_empty() {
+        return;
+    }
+
+    tracing::info!(
+        "ROCm acceleration available — injecting GPU passthrough for {} GPU(s)",
+        gpus.len()
+    );
+
+    // /dev/kfd is the ROCm kernel-mode driver, shared by all GPUs.
+    args.push("--device".into());
+    args.push("/dev/kfd".into());
+
+    // Mount the full /dev/dri directory so all render & card nodes are
+    // available inside the container.
+    args.push("--device".into());
+    args.push("/dev/dri".into());
+
+    // The 'video' and 'render' groups are needed to access GPU devices.
+    args.push("--group-add".into());
+    args.push("video".into());
+    args.push("--group-add".into());
+    args.push("render".into());
+
+    // Disable SELinux label confinement (GPU access fails otherwise).
+    args.push("--security-opt".into());
+    args.push("label=disable".into());
+
+    // Tell the processing binary to use the ROCm / MIGraphX execution
+    // provider instead of the default CPU-only tract backend.
+    args.push("-e".into());
+    args.push("GAIA_ACCEL=rocm".into());
+
+    // Pass the render node paths so the binary can select specific GPUs.
+    let render_nodes: Vec<String> = gpus.iter().map(|g| g.render_node.clone()).collect();
+    args.push("-e".into());
+    args.push(format!("ROCM_VISIBLE_DEVICES={}", render_nodes.join(",")));
 }
 
 /// Stop a container by name.  Returns Ok(()) on success or an error message.
