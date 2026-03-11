@@ -427,13 +427,10 @@ pub async fn start(name: &str) -> Result<(), String> {
     let mut spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
 
     // For processing containers, detect ROCm hardware early so we can
-    // switch to the `:rocm` image variant *before* pulling, and/or
-    // inject GPU passthrough arguments.
+    // inject GPU passthrough arguments.  A single image handles both
+    // GPU and CPU: ONNX Runtime selects the best available execution
+    // provider (MIGraphX → ROCm → CPU) at session creation time.
     let rocm_available = wants_rocm_passthrough(name) && detect_rocm_available().await;
-    if rocm_available && has_rocm_image(name) {
-        spec.image = rocm_image_tag(&spec.image);
-        tracing::info!("ROCm hardware detected — using image {}", spec.image);
-    }
 
     // 1. Pull the latest image.
     set_status(name, "pulling");
@@ -825,20 +822,10 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
-/// Returns `true` for container names that should use the `:rocm` image
-/// variant when GPU hardware is available.
-///
-/// Only containers that publish a `:rocm` tagged image on the registry
-/// should be listed here.  Containers that benefit from GPU passthrough
-/// but don't have a separate `:rocm` image (e.g. `gaia-light-processing`)
-/// should only appear in [`wants_rocm_passthrough`].
-pub fn has_rocm_image(name: &str) -> bool {
-    name.starts_with("gaia-audio-processing")
-}
-
 /// Returns `true` for containers that benefit from ROCm GPU passthrough
-/// (device mappings, env vars) regardless of whether they use a special
-/// `:rocm` image variant.
+/// (device mappings, `GAIA_ACCEL=rocm` env var) when AMD GPU hardware is
+/// detected.  A single image handles both GPU and CPU — ONNX Runtime
+/// selects the best execution provider at session creation time.
 pub fn wants_rocm_passthrough(name: &str) -> bool {
     name.starts_with("gaia-audio-processing") || name.starts_with("gaia-light-processing")
 }
@@ -852,24 +839,6 @@ pub async fn detect_rocm_available() -> bool {
     }
     tracing::debug!("detect_rocm_available: {} GPU(s) found", gpus.len());
     true
-}
-
-/// Append a `:rocm` tag to a container image reference.
-///
-/// If the image already has a tag (e.g. `:latest`) it is replaced.
-/// Otherwise `:rocm` is appended.
-pub fn rocm_image_tag(image: &str) -> String {
-    // Images look like "docker.io/fede2/gaia-audio-processing" (no tag)
-    // or "docker.io/fede2/gaia-audio-processing:latest".
-    // We need "docker.io/fede2/gaia-audio-processing:rocm".
-    if let Some(base) = image.rsplit_once(':') {
-        // Only treat it as a tag if the part after ':' has no '/' (not a
-        // port in a registry URL like localhost:5000/foo).
-        if !base.1.contains('/') {
-            return format!("{}:rocm", base.0);
-        }
-    }
-    format!("{image}:rocm")
 }
 
 /// Inject ROCm device passthrough + environment variables into
