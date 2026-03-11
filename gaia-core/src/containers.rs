@@ -545,6 +545,7 @@ pub async fn start(name: &str) -> Result<(), String> {
     args.push(spec.image);
 
     tracing::info!("Running container '{name}' via {cmd}");
+    tracing::debug!("Container '{name}' full args: {args:?}");
 
     let output = Command::new(cmd)
         .args(&args)
@@ -825,8 +826,10 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
 ///
 /// If no AMD GPUs are found this is a no-op.
 async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
+    tracing::debug!("maybe_inject_rocm_args: running GPU detection");
     let gpus = crate::hardware::detect_gpus().await;
     if gpus.is_empty() {
+        tracing::debug!("maybe_inject_rocm_args: no GPUs detected — skipping injection");
         return;
     }
 
@@ -863,6 +866,11 @@ async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
     let render_nodes: Vec<String> = gpus.iter().map(|g| g.render_node.clone()).collect();
     args.push("-e".into());
     args.push(format!("ROCM_VISIBLE_DEVICES={}", render_nodes.join(",")));
+
+    tracing::debug!(
+        "maybe_inject_rocm_args: injected env GAIA_ACCEL=rocm ROCM_VISIBLE_DEVICES={}",
+        render_nodes.join(",")
+    );
 }
 
 /// Stop a container by name.  Returns Ok(()) on success or an error message.

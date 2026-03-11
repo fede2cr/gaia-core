@@ -40,8 +40,8 @@ pub struct ImageUpdateStatus {
     pub image: String,
     /// `true` when the remote digest differs from the local one.
     pub has_update: bool,
-    /// Local repo digest, if the image has been pulled.
-    pub local_digest: Option<String>,
+    /// All local repo digests (manifest-list + per-arch).
+    pub local_digests: Vec<String>,
     /// Remote digest from Docker Hub.
     pub remote_digest: Option<String>,
     /// ISO-8601 timestamp of the last check.
@@ -115,30 +115,38 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
     let mut results: Vec<ImageUpdateStatus> = Vec::new();
 
     for (image, containers) in &image_to_containers {
-        let local = local_image_digest(cmd, image).await;
+        let local_digests = local_image_digests(cmd, image).await;
         let remote = remote_image_digest(&client, image).await;
 
         tracing::debug!(
             image,
-            ?local,
+            ?local_digests,
             ?remote,
             "Digest comparison for update check"
         );
 
-        let has_update = match (&local, &remote) {
-            (Some(l), Some(r)) => l != r,
+        let has_update = match (&local_digests[..], &remote) {
+            // Remote matches ANY of the local digests → up to date.
+            ([_, ..], Some(r)) => !local_digests.iter().any(|l| l == r),
             // Image never pulled → treat as needing update.
-            (None, Some(_)) => true,
+            ([], Some(_)) => true,
             // Cannot reach registry → unknown, keep previous state or false.
             _ => false,
         };
+
+        if has_update {
+            tracing::info!(
+                "Update available for {image}: remote={} not in local {local_digests:?}",
+                remote.as_deref().unwrap_or("?"),
+            );
+        }
 
         for cname in containers {
             let status = ImageUpdateStatus {
                 container: cname.clone(),
                 image: image.clone(),
                 has_update,
-                local_digest: local.clone(),
+                local_digests: local_digests.clone(),
                 remote_digest: remote.clone(),
                 last_checked: now.clone(),
             };
@@ -158,24 +166,49 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
 
 // ── Local digest ─────────────────────────────────────────────────────────
 
-/// Get the repo digest of a locally-pulled image.
+/// Get **all** repo digests of a locally-pulled image.
 ///
-/// Returns `Some("sha256:abc…")` or `None` if the image isn't present.
-async fn local_image_digest(cmd: &str, image: &str) -> Option<String> {
-    let output = tokio::process::Command::new(cmd)
-        .args(["image", "inspect", "--format", "{{index .RepoDigests 0}}", image])
+/// Podman/Docker often store multiple digests:
+/// - The manifest-list (fat manifest / OCI index) digest
+/// - The per-architecture manifest digest
+///
+/// The remote registry may return either one depending on the `Accept`
+/// header, so we collect all of them and compare against any match.
+///
+/// Returns an empty vec if the image isn't present.
+async fn local_image_digests(cmd: &str, image: &str) -> Vec<String> {
+    let output = match tokio::process::Command::new(cmd)
+        .args(["image", "inspect", "--format", "{{range .RepoDigests}}{{.}}\n{{end}}", image])
         .output()
         .await
-        .ok()?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("Failed to inspect image {image}: {e}");
+            return vec![];
+        }
+    };
 
     if !output.status.success() {
-        return None;
+        tracing::debug!(
+            "image inspect failed for {image}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return vec![];
     }
 
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    // Format: "docker.io/fede2/gaia-audio-capture@sha256:abc…"
-    // Extract just the "sha256:…" part.
-    raw.split('@').nth(1).map(|s| s.to_string())
+    // Each line: "docker.io/fede2/gaia-audio-capture@sha256:abc…"
+    // Extract just the "sha256:…" part from each.
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            line.split('@').nth(1).map(|s| s.to_string())
+        })
+        .collect()
 }
 
 // ── Remote digest (Docker Hub v2 API) ────────────────────────────────────

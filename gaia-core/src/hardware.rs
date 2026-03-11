@@ -378,9 +378,21 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
 /// The human-readable GPU name is read from the DRM subsystem or from
 /// `rocm-smi` output when available.
 pub async fn detect_gpus() -> Vec<GpuInfo> {
+    tracing::debug!("GPU detection: starting scan");
+
     // ROCm requires /dev/kfd — if it's missing, there's no ROCm stack.
-    if !tokio::fs::try_exists("/dev/kfd").await.unwrap_or(false) {
-        tracing::debug!("No /dev/kfd — ROCm not available");
+    let kfd_exists = tokio::fs::try_exists("/dev/kfd").await.unwrap_or(false);
+    tracing::debug!("GPU detection: /dev/kfd exists = {kfd_exists}");
+    if !kfd_exists {
+        tracing::info!("No /dev/kfd — ROCm not available");
+        return vec![];
+    }
+
+    // Also check that /dev/dri exists.
+    let dri_exists = tokio::fs::try_exists("/dev/dri").await.unwrap_or(false);
+    tracing::debug!("GPU detection: /dev/dri exists = {dri_exists}");
+    if !dri_exists {
+        tracing::warn!("/dev/kfd present but /dev/dri missing — cannot enumerate GPUs");
         return vec![];
     }
 
@@ -389,7 +401,10 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
     // Scan /sys/class/drm/ for render nodes backed by the amdgpu driver.
     let mut entries = match tokio::fs::read_dir("/sys/class/drm").await {
         Ok(e) => e,
-        Err(_) => return gpus,
+        Err(e) => {
+            tracing::warn!("GPU detection: cannot read /sys/class/drm: {e}");
+            return gpus;
+        }
     };
 
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -403,13 +418,18 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
 
         // Verify this is an amdgpu device by reading the driver symlink.
         let driver_link = entry.path().join("device/driver");
-        let is_amdgpu = match tokio::fs::read_link(&driver_link).await {
+        let driver_target = tokio::fs::read_link(&driver_link).await;
+        let is_amdgpu = match &driver_target {
             Ok(target) => target
                 .file_name()
                 .map(|f| f.to_string_lossy().contains("amdgpu"))
                 .unwrap_or(false),
             Err(_) => false,
         };
+        tracing::debug!(
+            "GPU detection: {name_str} driver={} amdgpu={is_amdgpu}",
+            driver_target.as_ref().map(|t| t.display().to_string()).unwrap_or_else(|e| format!("err({e})"))
+        );
         if !is_amdgpu {
             continue;
         }
@@ -425,6 +445,9 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
         // Read the GPU product name from sysfs.
         let label = read_gpu_label(&entry.path()).await;
 
+        tracing::debug!(
+            "GPU detection: found AMD GPU render_node={render_node} card={card_node:?} label={label:?}"
+        );
         gpus.push(GpuInfo {
             render_node,
             card_node,
@@ -433,7 +456,9 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
         });
     }
 
-    if !gpus.is_empty() {
+    if gpus.is_empty() {
+        tracing::info!("/dev/kfd present but no amdgpu render nodes found in /sys/class/drm");
+    } else {
         tracing::info!(
             "Detected {} AMD GPU(s) with ROCm support: {:?}",
             gpus.len(),
