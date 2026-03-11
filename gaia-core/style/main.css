@@ -555,6 +555,11 @@ code {
     background: rgba(239, 68, 68, 0.12);
 }
 
+.lifecycle-update {
+    color: var(--color-primary, #3b82f6);
+    background: rgba(59, 130, 246, 0.12);
+}
+
 @keyframes pulse-opacity {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }

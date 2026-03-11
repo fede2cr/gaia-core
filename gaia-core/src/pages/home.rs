@@ -5,7 +5,10 @@ use leptos::*;
 use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
 use crate::components::project_card::ProjectCard;
-use crate::server_fns::{get_capture_health, get_container_statuses, get_projects, CaptureHealth};
+use crate::server_fns::{
+    get_capture_health, get_container_statuses, get_projects, get_update_status, CaptureHealth,
+    ImageUpdate,
+};
 
 /// The main dashboard page.
 #[component]
@@ -50,6 +53,23 @@ pub fn Home() -> impl IntoView {
         new
     });
     provide_context(Signal::derive(move || capture_health_list.get()));
+
+    // ── Image update status polling ──────────────────────────────────
+    let update_status_resource =
+        create_local_resource(move || poll_tick.get(), |_| get_update_status());
+
+    let (update_list, set_update_list) = create_signal(Vec::<ImageUpdate>::new());
+    create_effect(move |prev: Option<Vec<ImageUpdate>>| {
+        let new = update_status_resource
+            .get()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        if prev.as_ref() != Some(&new) {
+            set_update_list.set(new.clone());
+        }
+        new
+    });
+    provide_context(Signal::derive(move || update_list.get()));
 
     // Poll every 3 s – only in the browser (set_interval is a wasm-bindgen API).
     #[cfg(feature = "hydrate")]

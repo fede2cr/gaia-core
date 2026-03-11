@@ -78,7 +78,11 @@ pub async fn update_count() -> usize {
 
 // ── Check logic ──────────────────────────────────────────────────────────
 
-/// Run an update check for **all** images in the container config.
+/// Run an update check for **running** container images.
+///
+/// Only containers whose lifecycle status is `"running"` are checked.
+/// Stopped containers are skipped because they pull the latest image
+/// automatically when they start.
 ///
 /// This is called both by the background loop and by the manual
 /// "Check Now" button.
@@ -87,10 +91,15 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
-    // Collect unique images (multiple containers may share an image,
-    // but we only need to check each image once).
+    // Collect unique images only for containers that are currently running.
+    // Stopped containers will pull the latest image on next start, so
+    // there is no need to query the registry for them.
     let mut image_to_containers: HashMap<String, Vec<String>> = HashMap::new();
     for (name, spec) in &cfg.containers {
+        let status = crate::containers::get_status(name);
+        if status != "running" {
+            continue;
+        }
         image_to_containers
             .entry(spec.image.clone())
             .or_default()
@@ -108,6 +117,13 @@ pub async fn check_all() -> Vec<ImageUpdateStatus> {
     for (image, containers) in &image_to_containers {
         let local = local_image_digest(cmd, image).await;
         let remote = remote_image_digest(&client, image).await;
+
+        tracing::debug!(
+            image,
+            ?local,
+            ?remote,
+            "Digest comparison for update check"
+        );
 
         let has_update = match (&local, &remote) {
             (Some(l), Some(r)) => l != r,
@@ -193,6 +209,11 @@ async fn remote_image_digest(client: &reqwest::Client, image: &str) -> Option<St
         .ok()?;
 
     // 2. HEAD the manifest to get the digest.
+    //
+    // Accept manifest-list / OCI-index types **first** so the registry
+    // returns the fat-manifest digest — that is what Podman/Docker store
+    // in `RepoDigests` after a pull.  If the image is single-arch the
+    // registry will fall back to the plain manifest type.
     let manifest_url = format!(
         "https://registry-1.docker.io/v2/{repo}/manifests/latest"
     );
@@ -201,7 +222,10 @@ async fn remote_image_digest(client: &reqwest::Client, image: &str) -> Option<St
         .header("Authorization", format!("Bearer {}", token_resp.token))
         .header(
             "Accept",
-            "application/vnd.docker.distribution.manifest.v2+json",
+            "application/vnd.oci.image.index.v1+json, \
+             application/vnd.docker.distribution.manifest.list.v2+json, \
+             application/vnd.oci.image.manifest.v1+json, \
+             application/vnd.docker.distribution.manifest.v2+json",
         )
         .send()
         .await
