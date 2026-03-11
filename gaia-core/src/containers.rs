@@ -847,11 +847,37 @@ async fn maybe_inject_rocm_args(args: &mut Vec<String>) {
     args.push("--device".into());
     args.push("/dev/dri".into());
 
-    // The 'video' and 'render' groups are needed to access GPU devices.
-    args.push("--group-add".into());
-    args.push("video".into());
-    args.push("--group-add".into());
-    args.push("render".into());
+    // Add the supplementary groups required for GPU device access.
+    // We resolve GIDs from the actual device nodes rather than using
+    // group names like "video" / "render", because those names may not
+    // exist inside the container image's /etc/group.
+    let mut gids = std::collections::BTreeSet::new();
+    if let Ok(meta) = tokio::fs::metadata("/dev/kfd").await {
+        use std::os::unix::fs::MetadataExt;
+        gids.insert(meta.gid());
+    }
+    // Also grab the GID of the first render node (usually the "render" group).
+    if let Some(rn) = gpus.first() {
+        if let Ok(meta) = tokio::fs::metadata(&rn.render_node).await {
+            use std::os::unix::fs::MetadataExt;
+            gids.insert(meta.gid());
+        }
+    }
+    // Fallback: use well-known names if we couldn't stat the devices
+    // (e.g. /dev/kfd not bind-mounted into gaia-core).
+    if gids.is_empty() {
+        tracing::debug!("Could not stat GPU device nodes for GIDs — falling back to group names");
+        args.push("--group-add".into());
+        args.push("video".into());
+        args.push("--group-add".into());
+        args.push("render".into());
+    } else {
+        for gid in &gids {
+            tracing::debug!("Adding supplementary GID {gid} for GPU access");
+            args.push("--group-add".into());
+            args.push(gid.to_string());
+        }
+    }
 
     // Disable SELinux label confinement (GPU access fails otherwise).
     args.push("--security-opt".into());
