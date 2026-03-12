@@ -1,6 +1,9 @@
 //! Reusable card component for displaying a Gaia sub-project with per-container toggles.
 
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
+// Explicit imports for compatibility with Rust ≥1.94 glob re-export changes.
+use leptos::prelude::{use_context, Signal};
 
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
@@ -37,16 +40,16 @@ fn LifecycleBadge(
             "pulling" => view! {
                 <span class="lifecycle-badge lifecycle-pulling">"Pulling..."</span>
             }
-            .into_view(),
+            .into_any(),
             "starting" => view! {
                 <span class="lifecycle-badge lifecycle-starting">"Starting..."</span>
             }
-            .into_view(),
+            .into_any(),
             s if s.starts_with("error") => view! {
                 <span class="lifecycle-badge lifecycle-error">{s.to_string()}</span>
             }
-            .into_view(),
-            _ => ().into_view(),
+            .into_any(),
+            _ => ().into_any(),
         }
     }
 }
@@ -67,18 +70,17 @@ fn DiskBadge(
         let list = health_list.get();
         if let Some(h) = list.iter().find(|h| h.slug == slug) {
             if h.capture_paused {
-                return view! {
+                return Either::Left(view! {
                     <span
                         class="lifecycle-badge lifecycle-error"
                         title=format!("Disk usage: {:.0}%", h.disk_usage_pct)
                     >
                         "⚠ Disk full – capture paused"
                     </span>
-                }
-                .into_view();
+                });
             }
         }
-        ().into_view()
+        Either::Right(())
     }
 }
 
@@ -105,14 +107,14 @@ fn CameraModeBadge(
                     "🌙 Night"
                 </span>
             }
-            .into_view(),
+            .into_any(),
             Some("day") => view! {
                 <span class="camera-mode-badge day" title="Camera in daylight mode">
                     "☀ Day"
                 </span>
             }
-            .into_view(),
-            _ => ().into_view(),
+            .into_any(),
+            _ => ().into_any(),
         }
     }
 }
@@ -132,14 +134,13 @@ fn UpdateBadge(
             .iter()
             .any(|u| u.container == container_name && u.has_update);
         if has {
-            view! {
+            Either::Left(view! {
                 <span class="lifecycle-badge lifecycle-update" title="Image update available">
                     "⬆ Update"
                 </span>
-            }
-            .into_view()
+            })
         } else {
-            ().into_view()
+            Either::Right(())
         }
     }
 }
@@ -172,9 +173,9 @@ pub fn ProjectCard(
 ) -> impl IntoView {
     let has_model_nodes = !processing_models.is_empty();
 
-    let (capture, set_capture) = create_signal(initial_capture);
-    let (processing, set_processing) = create_signal(initial_processing);
-    let (web, set_web) = create_signal(initial_web);
+    let (capture, set_capture) = signal(initial_capture);
+    let (processing, set_processing) = signal(initial_processing);
+    let (web, set_web) = signal(initial_web);
 
     let slug_for_disk = slug.clone();
 
@@ -212,7 +213,7 @@ pub fn ProjectCard(
         let slug = slug.clone();
         move |kind: &'static str| {
             let slug = slug.clone();
-            create_action(move |new_state: &bool| {
+            Action::new(move |new_state: &bool| {
                 let slug = slug.clone();
                 let new_state = *new_state;
                 let kind = kind.to_string();
@@ -250,7 +251,7 @@ pub fn ProjectCard(
     )> = processing_models
         .iter()
         .map(|node| {
-            let (running, set_running) = create_signal(node.running);
+            let (running, set_running) = signal(node.running);
             (
                 node.model_slug.clone(),
                 node.model_name.clone(),
@@ -297,7 +298,7 @@ pub fn ProjectCard(
         .map(|(model_slug, model_name, container_kind, running, set_running)| {
             let model_slug_action = model_slug.clone();
             let is_light = slug_for_models == "light";
-            let model_action = create_action(move |new_state: &bool| {
+            let model_action = Action::new(move |new_state: &bool| {
                 let slug = model_slug_action.clone();
                 let new_state = *new_state;
                 async move {
@@ -333,10 +334,10 @@ pub fn ProjectCard(
     view! {
         <div class="project-card">
             <div class="project-card-header">
-                <h3 class="project-name">{&name}</h3>
+                <h3 class="project-name">{name.clone()}</h3>
                 <span class=status_class>{status_label}</span>
             </div>
-            <p class="project-description">{&description}</p>
+            <p class="project-description">{description.clone()}</p>
 
             <div class="container-toggle-group">
                 <div class="container-toggle-item">
@@ -349,21 +350,21 @@ pub fn ProjectCard(
 
                 // Processing section: per-model toggles or a single toggle.
                 {if has_model_nodes {
-                    view! {
+                    Either::Left(view! {
                         <div class="model-processing-group">
                             <span class="processing-group-label">"Processing"</span>
-                            {model_toggle_views.clone()}
+                            {model_toggle_views}
                             <a href="/settings" class="model-settings-link">"Manage models →"</a>
                         </div>
-                    }.into_view()
+                    })
                 } else {
-                    view! {
+                    Either::Right(view! {
                         <div class="container-toggle-item">
                             <ToggleSwitch label="Processing".to_string() checked=processing on_toggle=on_processing />
                             <LifecycleBadge status=proc_status />
                             <UpdateBadge container_name=cname(&slug, "processing") />
                         </div>
-                    }.into_view()
+                    })
                 }}
 
                 <div class="container-toggle-item">
