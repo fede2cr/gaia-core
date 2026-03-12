@@ -1,6 +1,10 @@
 //! Component that displays detected local hardware devices with project assignment.
 
 use leptos::prelude::*;
+use leptos::prelude::{
+    signal, Action, Effect, ElementChild, IntoView, Resource,
+    ServerFnError, Suspense,
+};
 
 use crate::server_fns::{assign_device, detect_hardware, get_assignments, DeviceAssignment, HwDevice};
 

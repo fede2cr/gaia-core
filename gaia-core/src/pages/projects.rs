@@ -1,13 +1,14 @@
 //! Projects page with detailed view of each sub-project in an embedded iframe.
 
-use leptos::*;
+use leptos::prelude::*;
+use leptos::prelude::{ElementChild, IntoView, Resource, Suspense};
 
 use crate::server_fns::get_projects;
 
 /// The projects page shows each enabled project in an iframe via the reverse proxy.
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
-    let targets = create_resource(|| (), |_| get_projects());
+    let targets = Resource::new(|| (), |_| get_projects());
 
     view! {
         <section class="projects-page">
@@ -25,7 +26,7 @@ pub fn ProjectsPage() -> impl IntoView {
                             if enabled.is_empty() {
                                 view! {
                                     <p class="empty-state">"No projects are currently enabled. Enable them from the Dashboard."</p>
-                                }.into_view()
+                                }.into_any()
                             } else {
                                 view! {
                                     <div class="project-tabs">
@@ -37,7 +38,7 @@ pub fn ProjectsPage() -> impl IntoView {
                                                 let src = format!("/proxy/{slug}/");
                                                 view! {
                                                     <details class="project-tab" open=false>
-                                                        <summary class="tab-header">{&name}</summary>
+                                                        <summary class="tab-header">{name.clone()}</summary>
                                                         <div class="tab-content">
                                                             <iframe
                                                                 src=src
@@ -48,14 +49,14 @@ pub fn ProjectsPage() -> impl IntoView {
                                                     </details>
                                                 }
                                             })
-                                            .collect_view()}
+                                            .collect::<Vec<_>>()}
                                     </div>
-                                }.into_view()
+                                }.into_any()
                             }
                         }
                         Err(e) => view! {
                             <p class="error-state">"Error loading projects: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                     })
                 }}
             </Suspense>

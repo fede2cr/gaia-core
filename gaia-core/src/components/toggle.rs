@@ -1,6 +1,7 @@
 //! Toggle switch component.
 
 use leptos::prelude::*;
+use leptos::prelude::{Callback, ElementChild, IntoView, ReadSignal};
 
 /// A CSS-only toggle switch with a label.
 #[component]

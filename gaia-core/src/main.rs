@@ -8,6 +8,7 @@ async fn main() {
         Router,
     };
     use leptos::prelude::*;
+    use leptos::prelude::ElementChild;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use tower_http::services::ServeDir;
 

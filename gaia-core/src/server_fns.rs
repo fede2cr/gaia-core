@@ -1,6 +1,7 @@
 //! Leptos server functions called from UI components, executed on the server.
 
 use leptos::prelude::*;
+use leptos::prelude::ServerFnError;
 use serde::{Deserialize, Serialize};
 
 // Re-export the device / node types so the UI can use them.

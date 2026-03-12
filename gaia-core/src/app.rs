@@ -1,6 +1,7 @@
 //! Root Leptos application component with routing.
 
 use leptos::prelude::*;
+use leptos::prelude::ElementChild;
 use leptos_meta::*;
 use leptos_router::{
     components::{FlatRoutes, Route, Router},

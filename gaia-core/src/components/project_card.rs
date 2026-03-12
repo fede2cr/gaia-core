@@ -2,8 +2,11 @@
 
 use leptos::either::Either;
 use leptos::prelude::*;
-// Explicit imports for compatibility with Rust ≥1.94 glob re-export changes.
-use leptos::prelude::{use_context, Signal};
+// Explicit imports for Rust ≥1.94 where glob re-exports may not resolve.
+use leptos::prelude::{
+    signal, use_context, Action, Callback, Effect, ElementChild, IntoView,
+    ReadSignal, Resource, Signal, Suspense, WriteSignal,
+};
 
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
