@@ -1,6 +1,7 @@
 //! Settings / configuration page.
 
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
 
 use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
@@ -16,7 +17,7 @@ use crate::server_fns::{
 /// detected hardware and remote nodes.
 #[component]
 pub fn SettingsPage() -> impl IntoView {
-    let targets = create_resource(|| (), |_| get_projects());
+    let targets = Resource::new(|| (), |_| get_projects());
 
     view! {
         <section class="settings-page">
@@ -65,9 +66,9 @@ pub fn SettingsPage() -> impl IntoView {
                                     ];
                                     view! {
                                         <tr>
-                                            <td>{&t.name}</td>
-                                            <td><code>{&t.slug}</code></td>
-                                            <td><code>{&t.upstream_url}</code></td>
+                                            <td>{t.name.clone()}</td>
+                                            <td><code>{t.slug.clone()}</code></td>
+                                            <td><code>{t.upstream_url.clone()}</code></td>
                                             <td>{t.port}</td>
                                             <td>
                                                 <span class=status_class>{status_text}</span>
@@ -82,15 +83,15 @@ pub fn SettingsPage() -> impl IntoView {
                                                             };
                                                             view! { <span class=cls>{label}</span> }
                                                         })
-                                                        .collect_view()}
+                                                        .collect::<Vec<_>>()}
                                                 </span>
                                             </td>
                                         </tr>
                                     }
-                                }).collect_view(),
+                                }).collect::<Vec<_>>().into_any(),
                                 Err(_) => view! {
                                     <tr><td colspan="5">"Error loading projects"</td></tr>
-                                }.into_view(),
+                                }.into_any(),
                             })
                         }}
                     </Suspense>
@@ -188,20 +189,20 @@ pub fn SettingsPage() -> impl IntoView {
 /// Inline component for the latitude / longitude form.
 #[component]
 fn LocationForm() -> impl IntoView {
-    let location = create_resource(|| (), |_| get_location());
-    let save_action = create_action(move |(lat, lon): &(String, String)| {
+    let location = Resource::new(|| (), |_| get_location());
+    let save_action = Action::new(move |(lat, lon): &(String, String)| {
         let lat = lat.clone();
         let lon = lon.clone();
         async move { set_location(lat, lon).await }
     });
 
     // Local signals for the input fields.
-    let (lat, set_lat) = create_signal(String::new());
-    let (lon, set_lon) = create_signal(String::new());
-    let (status_msg, set_status) = create_signal(Option::<String>::None);
+    let (lat, set_lat) = signal(String::new());
+    let (lon, set_lon) = signal(String::new());
+    let (status_msg, set_status) = signal(Option::<String>::None);
 
     // Populate fields once the resource loads.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(loc)) = location.get() {
             set_lat.set(loc.latitude);
             set_lon.set(loc.longitude);
@@ -209,7 +210,7 @@ fn LocationForm() -> impl IntoView {
     });
 
     // Show feedback after the action completes.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = save_action.value().get() {
             match result {
                 Ok(_) => set_status.set(Some("Location saved.".into())),
@@ -234,7 +235,7 @@ fn LocationForm() -> impl IntoView {
                             type="text"
                             class="location-input"
                             placeholder="e.g. -34.6037"
-                            prop:value=lat
+                            prop:value=move || lat.get()
                             on:input=move |ev| set_lat.set(event_target_value(&ev))
                         />
                     </label>
@@ -244,7 +245,7 @@ fn LocationForm() -> impl IntoView {
                             type="text"
                             class="location-input"
                             placeholder="e.g. -58.3816"
-                            prop:value=lon
+                            prop:value=move || lon.get()
                             on:input=move |ev| set_lon.set(event_target_value(&ev))
                         />
                     </label>
@@ -270,22 +271,22 @@ fn LocationForm() -> impl IntoView {
 /// Node Name input — a friendly identifier for this station.
 #[component]
 fn NodeNameSettings() -> impl IntoView {
-    let name_res = create_resource(|| (), |_| get_node_name());
-    let (name, set_name) = create_signal(String::new());
-    let (status_msg, set_status) = create_signal(Option::<String>::None);
+    let name_res = Resource::new(|| (), |_| get_node_name());
+    let (name, set_name) = signal(String::new());
+    let (status_msg, set_status) = signal(Option::<String>::None);
 
-    let save_action = create_action(move |val: &String| {
+    let save_action = Action::new(move |val: &String| {
         let val = val.clone();
         async move { set_node_name(val).await }
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(n)) = name_res.get() {
             set_name.set(n);
         }
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = save_action.value().get() {
             match result {
                 Ok(n) => {
@@ -313,7 +314,7 @@ fn NodeNameSettings() -> impl IntoView {
                             type="text"
                             class="location-input"
                             placeholder="e.g. garden-station"
-                            prop:value=name
+                            prop:value=move || name.get()
                             on:input=move |ev| set_name.set(event_target_value(&ev))
                         />
                     </label>
@@ -334,14 +335,16 @@ fn NodeNameSettings() -> impl IntoView {
             </form>
         </Suspense>
     }
-}/// Audio model toggles for the Settings page.
+}
+
+/// Audio model toggles for the Settings page.
 #[component]
 fn AudioModelSettings() -> impl IntoView {
-    let models = create_resource(|| (), |_| get_audio_models());
-    let (model_list, set_model_list) = create_signal(Vec::<crate::server_fns::AudioModelInfo>::new());
+    let models = Resource::new(|| (), |_| get_audio_models());
+    let (model_list, set_model_list) = signal(Vec::<crate::server_fns::AudioModelInfo>::new());
 
     // Populate local state when the resource loads.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(ms)) = models.get() {
             set_model_list.set(ms);
         }
@@ -358,10 +361,10 @@ fn AudioModelSettings() -> impl IntoView {
                         let name = model.name.clone();
                         let description = model.description.clone();
 
-                        let (enabled, set_enabled) = create_signal(model.enabled);
+                        let (enabled, set_enabled) = signal(model.enabled);
                         let toggle_action = {
                             let slug = slug.clone();
-                            create_action(move |new_state: &bool| {
+                            Action::new(move |new_state: &bool| {
                                 let slug = slug.clone();
                                 let new_state = *new_state;
                                 async move {
@@ -407,10 +410,10 @@ fn AudioModelSettings() -> impl IntoView {
 /// Per-project debug logging toggles for the Settings page.
 #[component]
 fn DebugLoggingSettings() -> impl IntoView {
-    let debug_res = create_resource(|| (), |_| get_debug_settings());
-    let (items, set_items) = create_signal(Vec::<DebugState>::new());
+    let debug_res = Resource::new(|| (), |_| get_debug_settings());
+    let (items, set_items) = signal(Vec::<DebugState>::new());
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(ds)) = debug_res.get() {
             set_items.set(ds);
         }
@@ -426,10 +429,10 @@ fn DebugLoggingSettings() -> impl IntoView {
                         let slug = item.slug.clone();
                         let name = item.name.clone();
 
-                        let (enabled, set_enabled) = create_signal(item.enabled);
+                        let (enabled, set_enabled) = signal(item.enabled);
                         let toggle_action = {
                             let slug = slug.clone();
-                            create_action(move |new_state: &bool| {
+                            Action::new(move |new_state: &bool| {
                                 let slug = slug.clone();
                                 let new_state = *new_state;
                                 async move {
@@ -468,24 +471,24 @@ fn DebugLoggingSettings() -> impl IntoView {
 /// Numeric input for the parallel processing thread count.
 #[component]
 fn ProcessingThreadsSettings() -> impl IntoView {
-    let threads_res = create_resource(|| (), |_| get_processing_threads());
-    let (threads, set_threads) = create_signal(1u32);
-    let (status_msg, set_status) = create_signal(Option::<String>::None);
+    let threads_res = Resource::new(|| (), |_| get_processing_threads());
+    let (threads, set_threads) = signal(1u32);
+    let (status_msg, set_status) = signal(Option::<String>::None);
 
-    let save_action = create_action(move |val: &u32| {
+    let save_action = Action::new(move |val: &u32| {
         let val = *val;
         async move { set_processing_threads(val).await }
     });
 
     // Populate from DB.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(n)) = threads_res.get() {
             set_threads.set(n);
         }
     });
 
     // Show feedback.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = save_action.value().get() {
             match result {
                 Ok(n) => {
@@ -545,22 +548,22 @@ fn ProcessingThreadsSettings() -> impl IntoView {
 #[component]
 fn UpdateCheckSettings() -> impl IntoView {
     // ── Interval setting ─────────────────────────────────────────────
-    let interval_res = create_resource(|| (), |_| get_update_check_interval());
-    let (interval, set_interval_val) = create_signal(24u64);
-    let (interval_msg, set_interval_msg) = create_signal(Option::<String>::None);
+    let interval_res = Resource::new(|| (), |_| get_update_check_interval());
+    let (interval, set_interval_val) = signal(24u64);
+    let (interval_msg, set_interval_msg) = signal(Option::<String>::None);
 
-    let save_interval = create_action(move |val: &u64| {
+    let save_interval = Action::new(move |val: &u64| {
         let val = *val;
         async move { set_update_check_interval(val).await }
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(Ok(n)) = interval_res.get() {
             set_interval_val.set(n);
         }
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = save_interval.value().get() {
             match result {
                 Ok(n) => {
@@ -579,22 +582,22 @@ fn UpdateCheckSettings() -> impl IntoView {
     };
 
     // ── Manual check ─────────────────────────────────────────────────
-    let (updates, set_updates) = create_signal(Vec::<ImageUpdate>::new());
-    let (check_msg, set_check_msg) = create_signal(Option::<String>::None);
+    let (updates, set_updates) = signal(Vec::<ImageUpdate>::new());
+    let (check_msg, set_check_msg) = signal(Option::<String>::None);
 
     // Load cached status on page load.
-    let status_res = create_resource(|| (), |_| get_update_status());
-    create_effect(move |_| {
+    let status_res = Resource::new(|| (), |_| get_update_status());
+    Effect::new(move || {
         if let Some(Ok(list)) = status_res.get() {
             set_updates.set(list);
         }
     });
 
-    let check_action = create_action(move |_: &()| async move {
+    let check_action = Action::new(move |_: &()| async move {
         check_for_updates().await
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = check_action.value().get() {
             match result {
                 Ok(list) => {
@@ -636,7 +639,7 @@ fn UpdateCheckSettings() -> impl IntoView {
                     </button>
                     <button type="button" class="location-save-btn update-check-btn"
                         disabled=move || check_action.pending().get()
-                        on:click=move |_| check_action.dispatch(())
+                        on:click=move |_| { check_action.dispatch(()); }
                     >
                         {move || if check_action.pending().get() {
                             "Checking..."
@@ -669,24 +672,24 @@ fn UpdateCheckSettings() -> impl IntoView {
                 if list.is_empty() {
                     view! {
                         <p class="empty-state">"No update data yet. Click \"Check Now\" or wait for the next scheduled check."</p>
-                    }.into_view()
+                    }.into_any()
                 } else {
                     let has_any = list.iter().any(|u| u.has_update);
                     view! {
                         <div class="update-results">
                             {if has_any {
-                                view! {
+                                Either::Left(view! {
                                     <p class="update-summary update-available">
                                         "⬆ Updates available for some containers. "
                                         "Restart them from the Dashboard to pull the latest images."
                                     </p>
-                                }.into_view()
+                                })
                             } else {
-                                view! {
+                                Either::Right(view! {
                                     <p class="update-summary update-current">
                                         "✓ All container images are up to date."
                                     </p>
-                                }.into_view()
+                                })
                             }}
                             <div class="update-list">
                                 {list.into_iter().map(|u| {
@@ -698,7 +701,7 @@ fn UpdateCheckSettings() -> impl IntoView {
                                     let badge_text = if u.has_update { "Update" } else { "Current" };
                                     view! {
                                         <div class="update-row">
-                                            <span class="update-container-name">{&u.container}</span>
+                                            <span class="update-container-name">{u.container.clone()}</span>
                                             <span class=badge_cls>{badge_text}</span>
                                             <span class="update-last-checked">
                                                 {if u.last_checked == "unknown" {
@@ -709,10 +712,10 @@ fn UpdateCheckSettings() -> impl IntoView {
                                             </span>
                                         </div>
                                     }
-                                }).collect_view()}
+                                }).collect::<Vec<_>>()}
                             </div>
                         </div>
-                    }.into_view()
+                    }.into_any()
                 }
             }}
         </Suspense>

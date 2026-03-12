@@ -1,7 +1,7 @@
 //! Component that displays remote capture nodes discovered via mDNS
 //! with project assignment controls.
 
-use leptos::*;
+use leptos::prelude::*;
 
 use crate::server_fns::{assign_device, discover_nodes, get_assignments, DeviceAssignment, MdnsNode};
 
@@ -9,8 +9,8 @@ use crate::server_fns::{assign_device, discover_nodes, get_assignments, DeviceAs
 /// with a dropdown to assign each node to a Gaia project.
 #[component]
 pub fn MdnsPanel() -> impl IntoView {
-    let nodes = create_resource(|| (), |_| discover_nodes());
-    let assignments = create_resource(|| (), |_| get_assignments());
+    let nodes = Resource::new(|| (), |_| discover_nodes());
+    let assignments = Resource::new(|| (), |_| get_assignments());
 
     view! {
         <section class="mdns-panel">
@@ -28,7 +28,7 @@ pub fn MdnsPanel() -> impl IntoView {
                             <p class="empty-state">
                                 "No remote capture nodes found. Start a capture container on another device."
                             </p>
-                        }.into_view(),
+                        }.into_any(),
                         (Some(Ok(ns)), Some(Ok(asns))) => view! {
                             <div class="node-grid">
                                 {ns.into_iter().map(|n| {
@@ -37,18 +37,18 @@ pub fn MdnsPanel() -> impl IntoView {
                                         .map(|a| a.project.clone())
                                         .unwrap_or_else(|| n.project_slug.clone());
                                     view! { <NodeRow node=n current_project=current assignments_refetch=assignments /> }
-                                }).collect_view()}
+                                }).collect::<Vec<_>>()}
                             </div>
-                        }.into_view(),
+                        }.into_any(),
                         (Some(Err(e)), _) => view! {
                             <p class="error-state">"mDNS discovery error: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                         (_, Some(Err(e))) => view! {
                             <p class="error-state">"Error loading assignments: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                         _ => view! {
                             <p class="loading">"Loading..."</p>
-                        }.into_view(),
+                        }.into_any(),
                     }
                 }}
             </Suspense>
@@ -70,7 +70,7 @@ pub fn MdnsPanel() -> impl IntoView {
 fn NodeRow(
     node: MdnsNode,
     current_project: String,
-    assignments_refetch: Resource<(), Result<Vec<DeviceAssignment>, ServerFnError>>,
+    assignments_refetch: Resource<Result<Vec<DeviceAssignment>, ServerFnError>>,
 ) -> impl IntoView {
     let icon = match node.project_slug.as_str() {
         "radio" => "📡",
@@ -80,9 +80,9 @@ fn NodeRow(
     };
 
     let instance = node.instance.clone();
-    let (selected, set_selected) = create_signal(current_project);
+    let (selected, set_selected) = signal(current_project);
 
-    let assign_action = create_action(move |(dev_id, project): &(String, String)| {
+    let assign_action = Action::new(move |(dev_id, project): &(String, String)| {
         let dev_id = dev_id.clone();
         let project = project.clone();
         async move {
@@ -90,7 +90,7 @@ fn NodeRow(
         }
     });
 
-    create_effect(move |_| {
+    Effect::new(move || {
         if assign_action.version().get() > 0 {
             assignments_refetch.refetch();
         }
@@ -100,10 +100,10 @@ fn NodeRow(
         <div class="node-row">
             <span class="device-icon">{icon}</span>
             <div class="device-info">
-                <span class="device-label">{&node.instance}</span>
+                <span class="device-label">{node.instance.clone()}</span>
                 <span class="device-meta">
-                    {&node.hostname}
-                    " · " <code>{&node.service_type}</code>
+                    {node.hostname.clone()}
+                    " · " <code>{node.service_type.clone()}</code>
                 </span>
             </div>
             <select

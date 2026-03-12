@@ -1,6 +1,7 @@
 //! Home / dashboard page showing all running Gaia projects.
 
-use leptos::*;
+use leptos::prelude::*;
+use leptos::web_sys;
 
 use crate::components::device_list::DeviceList;
 use crate::components::mdns_panel::MdnsPanel;
@@ -13,73 +14,68 @@ use crate::server_fns::{
 /// The main dashboard page.
 #[component]
 pub fn Home() -> impl IntoView {
-    let targets = create_resource(|| (), |_| get_projects());
+    let targets = Resource::new(|| (), |_| get_projects());
 
     // ── Container lifecycle status polling ────────────────────────────
-    // Use create_local_resource so refetches do NOT trigger <Suspense>
-    // fallbacks (avoids the 3-second blink).
-    let (poll_tick, set_poll_tick) = create_signal(0_u32);
+    let (poll_tick, set_poll_tick) = signal(0_u32);
     let status_resource =
-        create_local_resource(move || poll_tick.get(), |_| get_container_statuses());
+        Resource::new(move || poll_tick.get(), |_| get_container_statuses());
 
     // Only propagate to children when the data actually changes.
-    let (status_list, set_status_list) = create_signal(Vec::<(String, String)>::new());
-    create_effect(move |prev: Option<Vec<(String, String)>>| {
+    let (status_list, set_status_list) = signal(Vec::<(String, String)>::new());
+    Effect::new(move || {
         let new = status_resource
             .get()
             .and_then(|r| r.ok())
             .unwrap_or_default();
-        if prev.as_ref() != Some(&new) {
-            set_status_list.set(new.clone());
-        }
-        new
+        set_status_list.set(new);
     });
     provide_context(Signal::derive(move || status_list.get()));
 
     // ── Capture health (disk guard) polling ──────────────────────────
     let capture_health_resource =
-        create_local_resource(move || poll_tick.get(), |_| get_capture_health());
+        Resource::new(move || poll_tick.get(), |_| get_capture_health());
 
     let (capture_health_list, set_capture_health_list) =
-        create_signal(Vec::<CaptureHealth>::new());
-    create_effect(move |prev: Option<Vec<CaptureHealth>>| {
+        signal(Vec::<CaptureHealth>::new());
+    Effect::new(move || {
         let new = capture_health_resource
             .get()
             .and_then(|r| r.ok())
             .unwrap_or_default();
-        if prev.as_ref() != Some(&new) {
-            set_capture_health_list.set(new.clone());
-        }
-        new
+        set_capture_health_list.set(new);
     });
     provide_context(Signal::derive(move || capture_health_list.get()));
 
     // ── Image update status polling ──────────────────────────────────
     let update_status_resource =
-        create_local_resource(move || poll_tick.get(), |_| get_update_status());
+        Resource::new(move || poll_tick.get(), |_| get_update_status());
 
-    let (update_list, set_update_list) = create_signal(Vec::<ImageUpdate>::new());
-    create_effect(move |prev: Option<Vec<ImageUpdate>>| {
+    let (update_list, set_update_list) = signal(Vec::<ImageUpdate>::new());
+    Effect::new(move || {
         let new = update_status_resource
             .get()
             .and_then(|r| r.ok())
             .unwrap_or_default();
-        if prev.as_ref() != Some(&new) {
-            set_update_list.set(new.clone());
-        }
-        new
+        set_update_list.set(new);
     });
     provide_context(Signal::derive(move || update_list.get()));
 
-    // Poll every 3 s – only in the browser (set_interval is a wasm-bindgen API).
+    // Poll every 3 s – only in the browser.
     #[cfg(feature = "hydrate")]
     {
-        set_interval(
-            move || {
-                set_poll_tick.update(|n| *n = n.wrapping_add(1));
-            },
-            std::time::Duration::from_secs(3),
-        );
+        use wasm_bindgen::prelude::*;
+        let cb = Closure::<dyn Fn()>::new(move || {
+            set_poll_tick.update(|n| *n = n.wrapping_add(1));
+        });
+        web_sys::window()
+            .unwrap()
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                3_000,
+            )
+            .unwrap();
+        cb.forget();
     }
     // Suppress unused-variable warning on the server build.
     #[cfg(not(feature = "hydrate"))]
@@ -114,12 +110,12 @@ pub fn Home() -> impl IntoView {
                                             processing_models=t.processing_models
                                         />
                                     }
-                                }).collect_view()}
+                                }).collect::<Vec<_>>()}
                             </div>
-                        }.into_view(),
+                        }.into_any(),
                         Err(e) => view! {
                             <p class="error-state">"Error: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                     })
                 }}
             </Suspense>

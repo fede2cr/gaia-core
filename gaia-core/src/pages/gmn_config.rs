@@ -1,6 +1,7 @@
 //! GMN configuration page for callsign and camera pre-alignment live stream.
 
-use leptos::*;
+use leptos::either::Either;
+use leptos::prelude::*;
 
 use crate::server_fns::{get_gmn_config, set_gmn_callsign, toggle_container};
 
@@ -9,7 +10,7 @@ use crate::server_fns::{get_gmn_config, set_gmn_callsign, toggle_container};
 /// Reached via the "Config" button on the GMN project card.
 #[component]
 pub fn GmnConfigPage() -> impl IntoView {
-    let config = create_resource(|| (), |_| get_gmn_config());
+    let config = Resource::new(|| (), |_| get_gmn_config());
 
     view! {
         <section class="gmn-config-page">
@@ -47,29 +48,29 @@ pub fn GmnConfigPage() -> impl IntoView {
                                         Some(device) => {
                                             let device_text = camera_label
                                                 .unwrap_or_else(|| device.clone());
-                                            view! {
+                                            Either::Left(view! {
                                                 <CameraPreview
                                                     device_label=device_text
                                                     initial_enabled=initial_config_enabled
                                                 />
-                                            }.into_view()
+                                            })
                                         }
-                                        None => view! {
+                                        None => Either::Right(view! {
                                             <p class="empty-state">
                                                 "No camera assigned to GMN. "
                                                 <a href="/">"Go to Dashboard → Capture Devices"</a>
                                                 " to assign a camera."
                                             </p>
-                                        }.into_view(),
+                                        }),
                                     }}
                                 </div>
                             }
-                            .into_view()
+                            .into_any()
                         }
                         Err(e) => view! {
                             <p class="error-state">"Error loading config: " {e.to_string()}</p>
                         }
-                        .into_view(),
+                        .into_any(),
                     })
                 }}
             </Suspense>
@@ -85,14 +86,14 @@ fn CameraPreview(
     device_label: String,
     initial_enabled: bool,
 ) -> impl IntoView {
-    let (streaming, set_streaming) = create_signal(initial_enabled);
-    let (loading, set_loading) = create_signal(false);
-    let (error_msg, set_error) = create_signal(Option::<String>::None);
+    let (streaming, set_streaming) = signal(initial_enabled);
+    let (loading, set_loading) = signal(false);
+    let (error_msg, set_error) = signal(Option::<String>::None);
     // A counter appended to the stream URL as a cache-buster so the browser
     // makes a fresh request each time the preview is (re-)started.
-    let (stream_epoch, set_stream_epoch) = create_signal(0u64);
+    let (stream_epoch, set_stream_epoch) = signal(0u64);
 
-    let toggle_action = create_action(move |new_state: &bool| {
+    let toggle_action = Action::new(move |new_state: &bool| {
         let new_state = *new_state;
         async move {
             toggle_container("gmn".into(), "config".into(), new_state).await
@@ -100,7 +101,7 @@ fn CameraPreview(
     });
 
     // Handle toggle result.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = toggle_action.value().get() {
             set_loading.set(false);
             match result {
@@ -186,16 +187,16 @@ fn CallsignForm(
     /// Pre-populated callsign value.
     initial: String,
 ) -> impl IntoView {
-    let (callsign, set_callsign) = create_signal(initial);
-    let save_action = create_action(move |val: &String| {
+    let (callsign, set_callsign) = signal(initial);
+    let save_action = Action::new(move |val: &String| {
         let val = val.clone();
         async move { set_gmn_callsign(val).await }
     });
 
-    let (status_msg, set_status) = create_signal(Option::<String>::None);
+    let (status_msg, set_status) = signal(Option::<String>::None);
 
     // Show feedback after save completes.
-    create_effect(move |_| {
+    Effect::new(move || {
         if let Some(result) = save_action.value().get() {
             match result {
                 Ok(_) => set_status.set(Some("Callsign saved.".into())),
@@ -219,7 +220,7 @@ fn CallsignForm(
                         type="text"
                         class="field-input"
                         placeholder="e.g. US000A"
-                        prop:value=callsign
+                        prop:value=move || callsign.get()
                         on:input=move |ev| set_callsign.set(event_target_value(&ev))
                     />
                 </label>

@@ -1,6 +1,6 @@
 //! Component that displays detected local hardware devices with project assignment.
 
-use leptos::*;
+use leptos::prelude::*;
 
 use crate::server_fns::{assign_device, detect_hardware, get_assignments, DeviceAssignment, HwDevice};
 
@@ -8,8 +8,8 @@ use crate::server_fns::{assign_device, detect_hardware, get_assignments, DeviceA
 /// with a dropdown to assign each device to a Gaia project.
 #[component]
 pub fn DeviceList() -> impl IntoView {
-    let devices = create_resource(|| (), |_| detect_hardware());
-    let assignments = create_resource(|| (), |_| get_assignments());
+    let devices = Resource::new(|| (), |_| detect_hardware());
+    let assignments = Resource::new(|| (), |_| get_assignments());
 
     view! {
         <section class="device-panel">
@@ -26,7 +26,7 @@ pub fn DeviceList() -> impl IntoView {
                             <p class="empty-state">
                                 "No capture devices detected. Attach an SDR dongle, microphone or camera."
                             </p>
-                        }.into_view(),
+                        }.into_any(),
                         (Some(Ok(devs)), Some(Ok(asns))) => view! {
                             <div class="device-grid">
                                 {devs.into_iter().map(|d| {
@@ -35,18 +35,18 @@ pub fn DeviceList() -> impl IntoView {
                                         .map(|a| a.project.clone())
                                         .unwrap_or_default();
                                     view! { <DeviceRow device=d current_project=current assignments_refetch=assignments /> }
-                                }).collect_view()}
+                                }).collect::<Vec<_>>()}
                             </div>
-                        }.into_view(),
+                        }.into_any(),
                         (Some(Err(e)), _) => view! {
                             <p class="error-state">"Error detecting devices: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                         (_, Some(Err(e))) => view! {
                             <p class="error-state">"Error loading assignments: " {e.to_string()}</p>
-                        }.into_view(),
+                        }.into_any(),
                         _ => view! {
                             <p class="loading">"Loading..."</p>
-                        }.into_view(),
+                        }.into_any(),
                     }
                 }}
             </Suspense>
@@ -68,7 +68,7 @@ pub fn DeviceList() -> impl IntoView {
 fn DeviceRow(
     device: HwDevice,
     current_project: String,
-    assignments_refetch: Resource<(), Result<Vec<DeviceAssignment>, ServerFnError>>,
+    assignments_refetch: Resource<Result<Vec<DeviceAssignment>, ServerFnError>>,
 ) -> impl IntoView {
     let icon = match device.kind.as_str() {
         "Sdr" => "📡",
@@ -84,9 +84,9 @@ fn DeviceRow(
     };
 
     let device_id = device.id.clone();
-    let (selected, set_selected) = create_signal(current_project);
+    let (selected, set_selected) = signal(current_project);
 
-    let assign_action = create_action(move |(dev_id, project): &(String, String)| {
+    let assign_action = Action::new(move |(dev_id, project): &(String, String)| {
         let dev_id = dev_id.clone();
         let project = project.clone();
         async move {
@@ -95,7 +95,7 @@ fn DeviceRow(
     });
 
     // Refetch assignments when the action completes.
-    create_effect(move |_| {
+    Effect::new(move || {
         if assign_action.version().get() > 0 {
             assignments_refetch.refetch();
         }
@@ -105,9 +105,9 @@ fn DeviceRow(
         <div class="device-row">
             <span class="device-icon">{icon}</span>
             <div class="device-info">
-                <span class="device-label">{&device.label}</span>
+                <span class="device-label">{device.label.clone()}</span>
                 <span class="device-meta">
-                    {kind_label} " · " <code>{&device.id}</code>
+                    {kind_label} " · " <code>{device.id.clone()}</code>
                 </span>
             </div>
             <select

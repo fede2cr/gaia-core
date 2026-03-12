@@ -20,10 +20,17 @@ COPY . .
 # Cache mounts persist compiled dependencies across source changes so only
 # modified crates are recompiled (incremental compilation).
 # Artifacts are copied to /tmp because cache mounts are not part of the image layer.
+#
+# wasm-bindgen-cli is installed from source (matching the exact version in
+# Cargo.lock) so cargo-leptos never needs to download a prebuilt binary.
+# This is required for arm64 where no prebuilt binaries are published.
+ENV LEPTOS_WASM_OPT_VERSION=version_127
 RUN --mount=type=cache,id=cargo-reg-${TARGETARCH},target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git-${TARGETARCH},target=/usr/local/cargo/git \
     --mount=type=cache,id=target-${TARGETARCH},target=/build/target \
-    cargo leptos build --release \
+    WB_VERSION=$(grep -A1 'name = "wasm-bindgen"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/') \
+    && cargo install wasm-bindgen-cli --version "$WB_VERSION" \
+    && cargo leptos build --release \
     && cp target/release/gaia-core /tmp/gaia-core \
     && cp -r target/site /tmp/site
 

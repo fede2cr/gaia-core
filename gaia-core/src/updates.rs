@@ -76,6 +76,15 @@ pub async fn update_count() -> usize {
         .count()
 }
 
+/// Remove the cached update status for a container.
+///
+/// Called when a container is stopped so the "update available" mark
+/// disappears.  Stopped containers pull the latest image on next start,
+/// so the mark is no longer meaningful.
+pub async fn clear_update_status(container: &str) {
+    state().write().await.remove(container);
+}
+
 // ── Check logic ──────────────────────────────────────────────────────────
 
 /// Run an update check for **running** container images.

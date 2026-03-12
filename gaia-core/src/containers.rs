@@ -932,6 +932,11 @@ pub async fn stop(name: &str) -> Result<(), String> {
     let cmd = runtime_cmd(rt);
 
     set_status(name, "stopped");
+
+    // Clear the "update available" mark — stopped containers pull the
+    // latest image on next start, so the indicator is no longer relevant.
+    crate::updates::clear_update_status(name).await;
+
     tracing::info!("Stopping container '{name}' via {cmd}");
 
     let output = Command::new(cmd)

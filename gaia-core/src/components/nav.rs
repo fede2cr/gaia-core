@@ -1,22 +1,31 @@
 //! Top-level navigation bar.
 
-use leptos::*;
-use leptos_router::*;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos::web_sys;
 
 use crate::server_fns::get_update_count;
 
 #[component]
 pub fn Nav() -> impl IntoView {
-    // Poll for update count every 60 s so the badge stays current.
-    let (poll_tick, set_poll_tick) = create_signal(0u32);
-    let update_count = create_local_resource(move || poll_tick.get(), |_| get_update_count());
+    // Poll for update count every 300 s so the badge stays current.
+    let (poll_tick, set_poll_tick) = signal(0u32);
+    let update_count = Resource::new(move || poll_tick.get(), |_| get_update_count());
 
     #[cfg(feature = "hydrate")]
     {
-        set_interval(
-            move || set_poll_tick.update(|n| *n = n.wrapping_add(1)),
-            std::time::Duration::from_secs(300),
-        );
+        use wasm_bindgen::prelude::*;
+        let cb = Closure::<dyn Fn()>::new(move || {
+            set_poll_tick.update(|n| *n = n.wrapping_add(1));
+        });
+        web_sys::window()
+            .unwrap()
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                300_000,
+            )
+            .unwrap();
+        cb.forget();
     }
     #[cfg(not(feature = "hydrate"))]
     let _ = set_poll_tick;
@@ -24,13 +33,13 @@ pub fn Nav() -> impl IntoView {
     view! {
         <nav class="nav">
             <div class="nav-brand">
-                <A href="/" class="nav-logo">"🌍 Gaia"</A>
+                <a href="/" class="nav-logo">"🌍 Gaia"</a>
             </div>
             <ul class="nav-links">
-                <li><A href="/" exact=true class="nav-link">"Dashboard"</A></li>
-                <li><A href="/projects" class="nav-link">"Projects"</A></li>
+                <li><a href="/" class="nav-link">"Dashboard"</a></li>
+                <li><a href="/projects" class="nav-link">"Projects"</a></li>
                 <li>
-                    <A href="/settings" class="nav-link">
+                    <a href="/settings" class="nav-link">
                         "Settings"
                         {move || {
                             let count = update_count
@@ -38,16 +47,16 @@ pub fn Nav() -> impl IntoView {
                                 .and_then(|r| r.ok())
                                 .unwrap_or(0);
                             if count > 0 {
-                                view! {
+                                Either::Left(view! {
                                     <span class="nav-update-badge" title=format!("{count} update(s) available")>
                                         {count.to_string()}
                                     </span>
-                                }.into_view()
+                                })
                             } else {
-                                ().into_view()
+                                Either::Right(())
                             }
                         }}
-                    </A>
+                    </a>
                 </li>
             </ul>
         </nav>

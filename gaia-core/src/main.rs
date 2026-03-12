@@ -4,16 +4,14 @@
 #[tokio::main]
 async fn main() {
     use axum::{
-        extract::State,
-        response::{IntoResponse, Response},
         routing::{any, get},
         Router,
     };
-    use leptos::*;
+    use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use tower_http::services::ServeDir;
 
-    use gaia_core::app::App;
+    use gaia_core::app::{shell, App};
     use gaia_core::config;
     use gaia_core::proxy::{self, ProxyState};
 
@@ -30,7 +28,7 @@ async fn main() {
     }
 
     // ── Configuration ────────────────────────────────────────────────────
-    let conf = get_configuration(None).await.unwrap();
+    let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options.clone();
     let addr = leptos_options.site_addr;
     let site_root = leptos_options.site_root.clone();
@@ -81,7 +79,7 @@ async fn main() {
     // .with_state() here converts Router<ProxyState> → Router<()> so it
     // can be nested inside the main router that carries LeptosOptions.
     let proxy_router = Router::new()
-        .route("/*path", any(proxy::proxy_handler))
+        .route("/{*path}", any(proxy::proxy_handler))
         .with_state(proxy_state);
 
     let app = Router::new()
@@ -90,13 +88,16 @@ async fn main() {
         // Reverse-proxy sub-router, mounted before the Leptos catch-all.
         .nest("/proxy", proxy_router)
         // Leptos SSR routes.
-        .leptos_routes(&leptos_options, routes, App)
+        .leptos_routes(&leptos_options, routes, {
+            let options = leptos_options.clone();
+            move || shell(options.clone())
+        })
         // Serve compiled WASM bundle, CSS, and static assets.
         .nest_service(
             "/pkg",
             ServeDir::new(format!("{}/pkg", site_root.to_string())),
         )
-        .fallback(fallback_handler)
+        .fallback(leptos_axum::file_and_error_handler(shell))
         .with_state(leptos_options);
 
     // ── Start server ─────────────────────────────────────────────────────
@@ -106,29 +107,6 @@ async fn main() {
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
-
-    /// Fallback: try to serve a static file, otherwise return 404.
-    async fn fallback_handler(
-        State(options): State<LeptosOptions>,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> Response {
-        let root = options.site_root.clone();
-        let (parts, _body) = req.into_parts();
-        let path = format!("{}{}", root, parts.uri.path());
-        match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let mime = mime_guess::from_path(&path)
-                    .first_raw()
-                    .unwrap_or("application/octet-stream");
-                ([("content-type", mime)], bytes).into_response()
-            }
-            Err(_) => (
-                axum::http::StatusCode::NOT_FOUND,
-                "404 - Not Found",
-            )
-                .into_response(),
-        }
-    }
 }
 
 /// When compiled without the `ssr` feature, main is a no-op stub.

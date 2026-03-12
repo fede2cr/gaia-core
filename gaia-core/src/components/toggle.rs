@@ -1,6 +1,6 @@
 //! Toggle switch component.
 
-use leptos::*;
+use leptos::prelude::*;
 
 /// A CSS-only toggle switch with a label.
 #[component]
@@ -18,10 +18,10 @@ pub fn ToggleSwitch(
             <input
                 type="checkbox"
                 class="toggle-input"
-                prop:checked=checked
+                prop:checked=move || checked.get()
                 on:change=move |ev| {
                     let val = event_target_checked(&ev);
-                    on_toggle.call(val);
+                    on_toggle.run(val);
                 }
             />
             <span class="toggle-slider"></span>

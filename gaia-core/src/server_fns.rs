@@ -1,6 +1,6 @@
 //! Leptos server functions called from UI components, executed on the server.
 
-use leptos::*;
+use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // Re-export the device / node types so the UI can use them.
@@ -49,7 +49,7 @@ pub struct MdnsNode {
 }
 
 /// Detect hardware devices on the host (SDR, microphones, cameras).
-#[server(DetectHardware, "/api")]
+#[server(prefix = "/api")]
 pub async fn detect_hardware() -> Result<Vec<HwDevice>, ServerFnError> {
     let devices = crate::hardware::detect_all().await;
     Ok(devices
@@ -64,7 +64,7 @@ pub async fn detect_hardware() -> Result<Vec<HwDevice>, ServerFnError> {
 }
 
 /// Discover remote capture nodes via mDNS.
-#[server(DiscoverNodes, "/api")]
+#[server(prefix = "/api")]
 pub async fn discover_nodes() -> Result<Vec<MdnsNode>, ServerFnError> {
     let nodes = crate::discovery::discover_all().await;
     Ok(nodes
@@ -82,7 +82,7 @@ pub async fn discover_nodes() -> Result<Vec<MdnsNode>, ServerFnError> {
 
 /// Toggle an individual container (capture / processing / web) within a project.
 /// Persists the change to SQLite **and** starts or stops the actual container.
-#[server(ToggleContainer, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_container(
     slug: String,
     container_kind: String,
@@ -118,13 +118,13 @@ pub async fn toggle_container(
 ///
 /// Returns `(container_name, status)` pairs where status is one of:
 /// `"stopped"`, `"pulling"`, `"starting"`, `"running"`, or `"error: <msg>"`.
-#[server(GetContainerStatuses, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_container_statuses() -> Result<Vec<(String, String)>, ServerFnError> {
     Ok(crate::containers::all_statuses())
 }
 
 /// Return the current list of project targets with persisted container states.
-#[server(GetProjects, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
     let mut targets = crate::config::default_targets();
     let states = crate::db::all_container_states()
@@ -250,7 +250,7 @@ pub struct DeviceAssignment {
 }
 
 /// Get all current device → project assignments.
-#[server(GetAssignments, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_assignments() -> Result<Vec<DeviceAssignment>, ServerFnError> {
     let rows = crate::db::get_all_assignments()
         .await
@@ -275,7 +275,7 @@ pub struct StationLocation {
 }
 
 /// Get the saved station location.
-#[server(GetLocation, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_location() -> Result<StationLocation, ServerFnError> {
     let lat = crate::db::get_setting("latitude")
         .await
@@ -292,7 +292,7 @@ pub async fn get_location() -> Result<StationLocation, ServerFnError> {
 }
 
 /// Save the station location.
-#[server(SetLocation, "/api")]
+#[server(prefix = "/api")]
 pub async fn set_location(
     latitude: String,
     longitude: String,
@@ -332,7 +332,7 @@ pub async fn set_location(
 // ── Processing Threads ───────────────────────────────────────────────────
 
 /// Get the configured number of parallel audio processing threads.
-#[server(GetProcessingThreads, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_processing_threads() -> Result<u32, ServerFnError> {
     let val = crate::db::get_setting("processing_threads")
         .await
@@ -342,7 +342,7 @@ pub async fn get_processing_threads() -> Result<u32, ServerFnError> {
 }
 
 /// Set the number of parallel audio processing threads.
-#[server(SetProcessingThreads, "/api")]
+#[server(prefix = "/api")]
 pub async fn set_processing_threads(threads: u32) -> Result<u32, ServerFnError> {
     let threads = threads.max(1).min(8);
     crate::db::set_setting("processing_threads", &threads.to_string())
@@ -356,7 +356,7 @@ pub async fn set_processing_threads(threads: u32) -> Result<u32, ServerFnError> 
 
 /// Get the configured friendly node name.
 /// Falls back to the system hostname when no name has been set.
-#[server(GetNodeName, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_node_name() -> Result<String, ServerFnError> {
     let val = crate::db::get_setting("node_name")
         .await
@@ -371,7 +371,7 @@ pub async fn get_node_name() -> Result<String, ServerFnError> {
 }
 
 /// Set the friendly node name.
-#[server(SetNodeName, "/api")]
+#[server(prefix = "/api")]
 pub async fn set_node_name(name: String) -> Result<String, ServerFnError> {
     let trimmed = name.trim().to_string();
     crate::db::set_setting("node_name", &trimmed)
@@ -382,7 +382,7 @@ pub async fn set_node_name(name: String) -> Result<String, ServerFnError> {
 }
 
 /// Assign a device to a project (or "none" to un-assign).
-#[server(AssignDevice, "/api")]
+#[server(prefix = "/api")]
 pub async fn assign_device(
     device_id: String,
     source: String,
@@ -412,7 +412,7 @@ pub struct GmnConfig {
 }
 
 /// Load the current GMN configuration (callsign + assigned camera).
-#[server(GetGmnConfig, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_gmn_config() -> Result<GmnConfig, ServerFnError> {
     let callsign = crate::db::get_setting("gmn_callsign")
         .await
@@ -449,7 +449,7 @@ pub async fn get_gmn_config() -> Result<GmnConfig, ServerFnError> {
 }
 
 /// Save the GMN station callsign.
-#[server(SetGmnCallsign, "/api")]
+#[server(prefix = "/api")]
 pub async fn set_gmn_callsign(callsign: String) -> Result<String, ServerFnError> {
     let trimmed = callsign.trim().to_string();
     crate::db::set_setting("gmn_callsign", &trimmed)
@@ -471,7 +471,7 @@ pub struct AudioModelInfo {
 }
 
 /// Return all known audio models with their persisted enabled state.
-#[server(GetAudioModels, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_audio_models() -> Result<Vec<AudioModelInfo>, ServerFnError> {
     let models = crate::config::default_audio_models();
     let db_states = crate::db::all_audio_model_states()
@@ -499,7 +499,7 @@ pub async fn get_audio_models() -> Result<Vec<AudioModelInfo>, ServerFnError> {
 /// Enable or disable an audio model in Settings.
 ///
 /// When a model is disabled, its processing container is also stopped.
-#[server(ToggleAudioModel, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_audio_model(
     slug: String,
     enabled: bool,
@@ -529,7 +529,7 @@ pub async fn toggle_audio_model(
 /// Toggle a specific audio processing-model container (start / stop).
 ///
 /// Called from the project card per-model processing toggles.
-#[server(ToggleAudioProcessing, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_audio_processing(
     model_slug: String,
     enabled: bool,
@@ -572,7 +572,7 @@ pub struct DebugState {
 }
 
 /// Return the debug-logging toggle state for every project.
-#[server(GetDebugSettings, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_debug_settings() -> Result<Vec<DebugState>, ServerFnError> {
     let states = crate::db::all_debug_states()
         .await
@@ -601,7 +601,7 @@ pub async fn get_debug_settings() -> Result<Vec<DebugState>, ServerFnError> {
 ///
 /// The change takes effect the next time a container in this project is
 /// (re)started — running containers are not affected until restart.
-#[server(ToggleDebugLogging, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_debug_logging(
     slug: String,
     enabled: bool,
@@ -619,7 +619,7 @@ pub async fn toggle_debug_logging(
 }
 
 /// Return the number of currently-active audio processing nodes.
-#[server(GetActiveProcessingNodeCount, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_active_processing_node_count() -> Result<usize, ServerFnError> {
     crate::db::active_audio_model_count()
         .await
@@ -638,7 +638,7 @@ pub struct LightModelInfo {
 }
 
 /// Return all known light models with their persisted enabled state.
-#[server(GetLightModels, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_light_models() -> Result<Vec<LightModelInfo>, ServerFnError> {
     let models = crate::config::default_light_models();
     let db_states = crate::db::all_light_model_states()
@@ -666,7 +666,7 @@ pub async fn get_light_models() -> Result<Vec<LightModelInfo>, ServerFnError> {
 /// Enable or disable a light model in Settings.
 ///
 /// When a model is disabled, its processing container is also stopped.
-#[server(ToggleLightModel, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_light_model(
     slug: String,
     enabled: bool,
@@ -693,7 +693,7 @@ pub async fn toggle_light_model(
 }
 
 /// Toggle a specific light processing-model container (start / stop).
-#[server(ToggleLightProcessing, "/api")]
+#[server(prefix = "/api")]
 pub async fn toggle_light_processing(
     model_slug: String,
     enabled: bool,
@@ -730,7 +730,7 @@ pub async fn toggle_light_processing(
 /// Register a new recording for analysis by all currently-enabled models.
 ///
 /// Returns the number of models that need to analyse it.
-#[server(RegisterRecording, "/api")]
+#[server(prefix = "/api")]
 pub async fn register_recording(recording: String) -> Result<usize, ServerFnError> {
     crate::db::register_recording(&recording)
         .await
@@ -738,7 +738,7 @@ pub async fn register_recording(recording: String) -> Result<usize, ServerFnErro
 }
 
 /// Mark a recording as analysed by a specific model.
-#[server(MarkRecordingAnalyzed, "/api")]
+#[server(prefix = "/api")]
 pub async fn mark_recording_analyzed(
     recording: String,
     model_slug: String,
@@ -755,7 +755,7 @@ pub async fn mark_recording_analyzed(
 
 /// Return the list of recordings that have been fully analysed by all
 /// models and can safely be deleted.
-#[server(FullyAnalyzedRecordings, "/api")]
+#[server(prefix = "/api")]
 pub async fn fully_analyzed_recordings() -> Result<Vec<String>, ServerFnError> {
     crate::db::fully_analyzed_recordings()
         .await
@@ -763,7 +763,7 @@ pub async fn fully_analyzed_recordings() -> Result<Vec<String>, ServerFnError> {
 }
 
 /// Remove tracking rows for a recording after the file has been deleted.
-#[server(RemoveRecordingTracking, "/api")]
+#[server(prefix = "/api")]
 pub async fn remove_recording_tracking(recording: String) -> Result<(), ServerFnError> {
     crate::db::remove_recording_tracking(&recording)
         .await
@@ -791,7 +791,7 @@ pub struct CaptureHealth {
 ///
 /// Containers with `capture_port == 0` or that are unreachable are silently
 /// skipped.
-#[server(GetCaptureHealth, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_capture_health() -> Result<Vec<CaptureHealth>, ServerFnError> {
     let targets = crate::config::default_targets();
     let client = reqwest::Client::builder()
@@ -874,7 +874,7 @@ pub struct ImageUpdate {
 ///
 /// Returns one entry per container.  `has_update` is `true` when the
 /// remote Docker Hub digest differs from the locally-pulled one.
-#[server(GetUpdateStatus, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_update_status() -> Result<Vec<ImageUpdate>, ServerFnError> {
     let statuses = crate::updates::all_update_statuses().await;
     Ok(statuses
@@ -889,7 +889,7 @@ pub async fn get_update_status() -> Result<Vec<ImageUpdate>, ServerFnError> {
 }
 
 /// Get the number of images that have updates available.
-#[server(GetUpdateCount, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_update_count() -> Result<usize, ServerFnError> {
     Ok(crate::updates::update_count().await)
 }
@@ -897,7 +897,7 @@ pub async fn get_update_count() -> Result<usize, ServerFnError> {
 /// Manually trigger an update check (for development / impatient users).
 ///
 /// Returns the fresh status list.
-#[server(CheckForUpdates, "/api")]
+#[server(prefix = "/api")]
 pub async fn check_for_updates() -> Result<Vec<ImageUpdate>, ServerFnError> {
     let statuses = crate::updates::check_all().await;
     Ok(statuses
@@ -912,7 +912,7 @@ pub async fn check_for_updates() -> Result<Vec<ImageUpdate>, ServerFnError> {
 }
 
 /// Get the update check interval in hours.
-#[server(GetUpdateCheckInterval, "/api")]
+#[server(prefix = "/api")]
 pub async fn get_update_check_interval() -> Result<u64, ServerFnError> {
     let val = crate::db::get_setting("update_check_interval")
         .await
@@ -922,7 +922,7 @@ pub async fn get_update_check_interval() -> Result<u64, ServerFnError> {
 }
 
 /// Set the update check interval in hours.
-#[server(SetUpdateCheckInterval, "/api")]
+#[server(prefix = "/api")]
 pub async fn set_update_check_interval(hours: u64) -> Result<u64, ServerFnError> {
     let hours = hours.max(1).min(168); // 1h to 1 week
     crate::db::set_setting("update_check_interval", &hours.to_string())
