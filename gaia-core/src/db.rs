@@ -1,4 +1,4 @@
-//! SQLite persistence layer for Gaia Core.
+//! SQLite persistence layer for Gaia Core (via libsql / Turso).
 //!
 //! Stores container on/off state and device-to-project assignments in a
 //! single SQLite database.  The DB file lives at
@@ -9,13 +9,17 @@
 //! `tokio::sync::Mutex<Connection>` so they are safe to call from async
 //! server functions.
 
-use rusqlite::{params, Connection};
+use libsql::params;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 /// Global database connection.
-static DB: LazyLock<Mutex<Option<Connection>>> = LazyLock::new(|| Mutex::new(None));
+static DB: LazyLock<Mutex<Option<libsql::Connection>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Keep the `Database` handle alive for the program lifetime so the
+/// connection returned by `db.connect()` stays valid.
+static DB_HANDLE: LazyLock<Mutex<Option<libsql::Database>>> = LazyLock::new(|| Mutex::new(None));
 
 // ── Initialisation ───────────────────────────────────────────────────────
 
@@ -28,22 +32,31 @@ pub async fn init() {
         std::fs::create_dir_all(parent).ok();
     }
 
-    let conn = Connection::open(&path).expect("failed to open SQLite database");
-    conn.execute_batch("PRAGMA journal_mode = WAL;").ok();
+    let db = libsql::Builder::new_local(
+        path.to_str().expect("Non-UTF-8 database path"),
+    )
+    .build()
+    .await
+    .expect("failed to open SQLite database");
+
+    let conn = db.connect().expect("failed to connect to database");
+    conn.execute_batch("PRAGMA journal_mode = WAL;")
+        .await
+        .ok();
 
     // ── Migrations ───────────────────────────────────────────────────
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS container_state (
             slug           TEXT NOT NULL,
-            container_kind TEXT NOT NULL,   -- 'capture', 'processing', 'web'
+            container_kind TEXT NOT NULL,
             enabled        INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (slug, container_kind)
         );
 
         CREATE TABLE IF NOT EXISTS device_assignments (
             device_id TEXT PRIMARY KEY,
-            source    TEXT NOT NULL DEFAULT 'local',  -- 'local' or 'remote'
+            source    TEXT NOT NULL DEFAULT 'local',
             project   TEXT NOT NULL DEFAULT ''
         );
 
@@ -70,9 +83,13 @@ pub async fn init() {
         );
         ",
     )
+    .await
     .expect("failed to run DB migrations");
 
     tracing::info!("SQLite database opened at {}", path.display());
+
+    // Store both the Database handle (keeps SQLite alive) and the Connection.
+    *DB_HANDLE.lock().await = Some(db);
     *DB.lock().await = Some(conn);
 }
 
@@ -95,8 +112,9 @@ pub async fn set_container_enabled(
         "INSERT INTO container_state (slug, container_kind, enabled)
          VALUES (?1, ?2, ?3)
          ON CONFLICT(slug, container_kind) DO UPDATE SET enabled = excluded.enabled",
-        params![slug, container_kind, enabled as i32],
+        params![slug.to_string(), container_kind.to_string(), enabled as i32],
     )
+    .await
     .map_err(|e| format!("DB set_container_enabled: {e}"))?;
     Ok(())
 }
@@ -110,40 +128,42 @@ pub async fn get_container_enabled(
 ) -> Result<Option<bool>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached(
+    let mut rows = conn
+        .query(
             "SELECT enabled FROM container_state WHERE slug = ?1 AND container_kind = ?2",
+            params![slug.to_string(), container_kind.to_string()],
         )
-        .map_err(|e| format!("DB prepare: {e}"))?;
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
 
-    let result: Option<i32> = stmt
-        .query_row(params![slug, container_kind], |row| row.get(0))
-        .ok();
-
-    Ok(result.map(|v| v != 0))
+    match rows.next().await {
+        Ok(Some(row)) => {
+            let v: i32 = row.get(0).map_err(|e| format!("DB row: {e}"))?;
+            Ok(Some(v != 0))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Load *all* saved container states into a flat vec.
 pub async fn all_container_states() -> Result<Vec<(String, String, bool)>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT slug, container_kind, enabled FROM container_state")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i32>(2)? != 0,
-            ))
-        })
+    let mut rows = conn
+        .query(
+            "SELECT slug, container_kind, enabled FROM container_state",
+            (),
+        )
+        .await
         .map_err(|e| format!("DB query: {e}"))?;
 
     let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        out.push((
+            row.get::<String>(0).map_err(|e| format!("DB row: {e}"))?,
+            row.get::<String>(1).map_err(|e| format!("DB row: {e}"))?,
+            row.get::<i32>(2).map_err(|e| format!("DB row: {e}"))? != 0,
+        ));
     }
     Ok(out)
 }
@@ -162,23 +182,21 @@ pub struct AssignmentRow {
 pub async fn get_all_assignments() -> Result<Vec<AssignmentRow>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT device_id, source, project FROM device_assignments")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(AssignmentRow {
-                device_id: row.get(0)?,
-                source: row.get(1)?,
-                project: row.get(2)?,
-            })
-        })
+    let mut rows = conn
+        .query(
+            "SELECT device_id, source, project FROM device_assignments",
+            (),
+        )
+        .await
         .map_err(|e| format!("DB query: {e}"))?;
 
     let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        out.push(AssignmentRow {
+            device_id: row.get(0).map_err(|e| format!("DB row: {e}"))?,
+            source: row.get(1).map_err(|e| format!("DB row: {e}"))?,
+            project: row.get(2).map_err(|e| format!("DB row: {e}"))?,
+        });
     }
     Ok(out)
 }
@@ -198,16 +216,18 @@ pub async fn set_assignment(
     if project.is_empty() {
         conn.execute(
             "DELETE FROM device_assignments WHERE device_id = ?1",
-            params![device_id],
+            params![device_id.to_string()],
         )
+        .await
         .map_err(|e| format!("DB delete assignment: {e}"))?;
     } else {
         conn.execute(
             "INSERT INTO device_assignments (device_id, source, project)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(device_id) DO UPDATE SET source = excluded.source, project = excluded.project",
-            params![device_id, source, project],
+            params![device_id.to_string(), source.to_string(), project.to_string()],
         )
+        .await
         .map_err(|e| format!("DB set_assignment: {e}"))?;
     }
     Ok(())
@@ -219,13 +239,18 @@ pub async fn set_assignment(
 pub async fn get_setting(key: &str) -> Result<Option<String>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT value FROM settings WHERE key = ?1")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let result: Option<String> = stmt
-        .query_row(params![key], |row| row.get(0))
-        .ok();
-    Ok(result)
+    let mut rows = conn
+        .query(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key.to_string()],
+        )
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    match rows.next().await {
+        Ok(Some(row)) => Ok(Some(row.get(0).map_err(|e| format!("DB row: {e}"))?)),
+        _ => Ok(None),
+    }
 }
 
 /// Write a setting (upsert).
@@ -235,8 +260,9 @@ pub async fn set_setting(key: &str, value: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value],
+        params![key.to_string(), value.to_string()],
     )
+    .await
     .map_err(|e| format!("DB set_setting: {e}"))?;
     Ok(())
 }
@@ -278,8 +304,9 @@ pub async fn set_audio_model_enabled(slug: &str, enabled: bool) -> Result<(), St
         "INSERT INTO audio_models (slug, enabled)
          VALUES (?1, ?2)
          ON CONFLICT(slug) DO UPDATE SET enabled = excluded.enabled",
-        params![slug, enabled as i32],
+        params![slug.to_string(), enabled as i32],
     )
+    .await
     .map_err(|e| format!("DB set_audio_model_enabled: {e}"))?;
     Ok(())
 }
@@ -289,33 +316,38 @@ pub async fn set_audio_model_enabled(slug: &str, enabled: bool) -> Result<(), St
 pub async fn get_audio_model_enabled(slug: &str) -> Result<Option<bool>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT enabled FROM audio_models WHERE slug = ?1")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let result: Option<i32> = stmt
-        .query_row(params![slug], |row| row.get(0))
-        .ok();
-    Ok(result.map(|v| v != 0))
+    let mut rows = conn
+        .query(
+            "SELECT enabled FROM audio_models WHERE slug = ?1",
+            params![slug.to_string()],
+        )
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    match rows.next().await {
+        Ok(Some(row)) => {
+            let v: i32 = row.get(0).map_err(|e| format!("DB row: {e}"))?;
+            Ok(Some(v != 0))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Load all audio model enabled states.
 pub async fn all_audio_model_states() -> Result<Vec<(String, bool)>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT slug, enabled FROM audio_models")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i32>(1)? != 0,
-            ))
-        })
+    let mut rows = conn
+        .query("SELECT slug, enabled FROM audio_models", ())
+        .await
         .map_err(|e| format!("DB query: {e}"))?;
+
     let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        out.push((
+            row.get::<String>(0).map_err(|e| format!("DB row: {e}"))?,
+            row.get::<i32>(1).map_err(|e| format!("DB row: {e}"))? != 0,
+        ));
     }
     Ok(out)
 }
@@ -324,13 +356,22 @@ pub async fn all_audio_model_states() -> Result<Vec<(String, bool)>, String> {
 pub async fn active_audio_model_count() -> Result<usize, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let count: i32 = conn
-        .query_row(
+    let mut rows = conn
+        .query(
             "SELECT COUNT(*) FROM audio_models WHERE enabled = 1",
-            [],
-            |row| row.get(0),
+            (),
         )
-        .map_err(|e| format!("DB count audio models: {e}"))?;
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    let count: i32 = rows
+        .next()
+        .await
+        .map_err(|e| format!("DB row: {e}"))?
+        .map(|r| r.get::<i32>(0))
+        .transpose()
+        .map_err(|e| format!("DB row: {e}"))?
+        .unwrap_or(0);
     Ok(count as usize)
 }
 
@@ -344,8 +385,9 @@ pub async fn set_light_model_enabled(slug: &str, enabled: bool) -> Result<(), St
         "INSERT INTO light_models (slug, enabled)
          VALUES (?1, ?2)
          ON CONFLICT(slug) DO UPDATE SET enabled = excluded.enabled",
-        params![slug, enabled as i32],
+        params![slug.to_string(), enabled as i32],
     )
+    .await
     .map_err(|e| format!("DB set_light_model_enabled: {e}"))?;
     Ok(())
 }
@@ -355,33 +397,38 @@ pub async fn set_light_model_enabled(slug: &str, enabled: bool) -> Result<(), St
 pub async fn get_light_model_enabled(slug: &str) -> Result<Option<bool>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT enabled FROM light_models WHERE slug = ?1")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let result: Option<i32> = stmt
-        .query_row(params![slug], |row| row.get(0))
-        .ok();
-    Ok(result.map(|v| v != 0))
+    let mut rows = conn
+        .query(
+            "SELECT enabled FROM light_models WHERE slug = ?1",
+            params![slug.to_string()],
+        )
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    match rows.next().await {
+        Ok(Some(row)) => {
+            let v: i32 = row.get(0).map_err(|e| format!("DB row: {e}"))?;
+            Ok(Some(v != 0))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Load all light model enabled states.
 pub async fn all_light_model_states() -> Result<Vec<(String, bool)>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT slug, enabled FROM light_models")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i32>(1)? != 0,
-            ))
-        })
+    let mut rows = conn
+        .query("SELECT slug, enabled FROM light_models", ())
+        .await
         .map_err(|e| format!("DB query: {e}"))?;
+
     let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        out.push((
+            row.get::<String>(0).map_err(|e| format!("DB row: {e}"))?,
+            row.get::<i32>(1).map_err(|e| format!("DB row: {e}"))? != 0,
+        ));
     }
     Ok(out)
 }
@@ -390,13 +437,22 @@ pub async fn all_light_model_states() -> Result<Vec<(String, bool)>, String> {
 pub async fn active_light_model_count() -> Result<usize, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let count: i32 = conn
-        .query_row(
+    let mut rows = conn
+        .query(
             "SELECT COUNT(*) FROM light_models WHERE enabled = 1",
-            [],
-            |row| row.get(0),
+            (),
         )
-        .map_err(|e| format!("DB count light models: {e}"))?;
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    let count: i32 = rows
+        .next()
+        .await
+        .map_err(|e| format!("DB row: {e}"))?
+        .map(|r| r.get::<i32>(0))
+        .transpose()
+        .map_err(|e| format!("DB row: {e}"))?
+        .unwrap_or(0);
     Ok(count as usize)
 }
 
@@ -409,22 +465,29 @@ pub async fn active_light_model_count() -> Result<usize, String> {
 pub async fn register_recording(recording: &str) -> Result<usize, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached("SELECT slug FROM audio_models WHERE enabled = 1")
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let slugs: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
-        .map_err(|e| format!("DB query: {e}"))?
-        .filter_map(|r| r.ok())
-        .collect();
+
+    let mut rows = conn
+        .query(
+            "SELECT slug FROM audio_models WHERE enabled = 1",
+            (),
+        )
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    let mut slugs = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        let slug: String = row.get(0).map_err(|e| format!("DB row: {e}"))?;
+        slugs.push(slug);
+    }
 
     let count = slugs.len();
     for slug in &slugs {
         conn.execute(
             "INSERT OR IGNORE INTO recording_analysis (recording, model_slug, completed)
              VALUES (?1, ?2, 0)",
-            params![recording, slug],
+            params![recording.to_string(), slug.clone()],
         )
+        .await
         .map_err(|e| format!("DB register_recording: {e}"))?;
     }
     Ok(count)
@@ -440,8 +503,9 @@ pub async fn mark_recording_analyzed(
     conn.execute(
         "UPDATE recording_analysis SET completed = 1
          WHERE recording = ?1 AND model_slug = ?2",
-        params![recording, model_slug],
+        params![recording.to_string(), model_slug.to_string()],
     )
+    .await
     .map_err(|e| format!("DB mark_recording_analyzed: {e}"))?;
     Ok(())
 }
@@ -450,14 +514,23 @@ pub async fn mark_recording_analyzed(
 pub async fn is_recording_fully_analyzed(recording: &str) -> Result<bool, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let pending: i32 = conn
-        .query_row(
+    let mut rows = conn
+        .query(
             "SELECT COUNT(*) FROM recording_analysis
              WHERE recording = ?1 AND completed = 0",
-            params![recording],
-            |row| row.get(0),
+            params![recording.to_string()],
         )
-        .map_err(|e| format!("DB is_recording_fully_analyzed: {e}"))?;
+        .await
+        .map_err(|e| format!("DB query: {e}"))?;
+
+    let pending: i32 = rows
+        .next()
+        .await
+        .map_err(|e| format!("DB row: {e}"))?
+        .map(|r| r.get::<i32>(0))
+        .transpose()
+        .map_err(|e| format!("DB row: {e}"))?
+        .unwrap_or(0);
     Ok(pending == 0)
 }
 
@@ -466,19 +539,19 @@ pub async fn is_recording_fully_analyzed(recording: &str) -> Result<bool, String
 pub async fn fully_analyzed_recordings() -> Result<Vec<String>, String> {
     let guard = DB.lock().await;
     let conn = guard.as_ref().ok_or("DB not initialised")?;
-    let mut stmt = conn
-        .prepare_cached(
+    let mut rows = conn
+        .query(
             "SELECT recording FROM recording_analysis
              GROUP BY recording
              HAVING COUNT(*) > 0 AND SUM(completed = 0) = 0",
+            (),
         )
-        .map_err(|e| format!("DB prepare: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| row.get(0))
+        .await
         .map_err(|e| format!("DB query: {e}"))?;
+
     let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("DB row: {e}"))?);
+    while let Some(row) = rows.next().await.map_err(|e| format!("DB row: {e}"))? {
+        out.push(row.get(0).map_err(|e| format!("DB row: {e}"))?);
     }
     Ok(out)
 }
@@ -489,8 +562,9 @@ pub async fn remove_recording_tracking(recording: &str) -> Result<(), String> {
     let conn = guard.as_ref().ok_or("DB not initialised")?;
     conn.execute(
         "DELETE FROM recording_analysis WHERE recording = ?1",
-        params![recording],
+        params![recording.to_string()],
     )
+    .await
     .map_err(|e| format!("DB remove_recording_tracking: {e}"))?;
     Ok(())
 }

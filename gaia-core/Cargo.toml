@@ -35,7 +35,7 @@ http                = { version = "1", optional = true }
 hyper               = { version = "1", optional = true }
 hyper-util          = { version = "0.1", optional = true }
 http-body-util      = { version = "0.1", optional = true }
-rusqlite            = { version = "0.31", features = ["bundled"], optional = true }
+libsql              = { version = "0.9", default-features = false, features = ["core"], optional = true }
 toml                = { version = "0.8", optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
@@ -63,7 +63,7 @@ ssr = [
     "dep:hyper",
     "dep:hyper-util",
     "dep:http-body-util",
-    "dep:rusqlite",
+    "dep:libsql",
     "dep:toml",
 ]
 
