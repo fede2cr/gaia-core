@@ -1156,6 +1156,20 @@ pub async fn sync_with_db() {
 
     let audio_proc_name = "gaia-audio-processing";
     let audio_proc_running = is_running(audio_proc_name).await;
+
+    // Clean up legacy per-model processing containers from the old
+    // architecture (e.g. gaia-audio-processing-perch, -batdetect2, -birdnet3).
+    // These are no longer used; all models run in the single container.
+    for legacy_suffix in &["perch", "batdetect2", "birdnet3"] {
+        let legacy_name = format!("gaia-audio-processing-{legacy_suffix}");
+        if is_running(&legacy_name).await {
+            tracing::info!("Stopping legacy per-model container '{legacy_name}'");
+            if let Err(e) = stop(&legacy_name).await {
+                tracing::warn!("Could not stop legacy container '{legacy_name}': {e}");
+            }
+        }
+    }
+
     match (audio_proc_should_run, audio_proc_running) {
         (true, true) => {
             set_status(audio_proc_name, "running");
