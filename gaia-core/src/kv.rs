@@ -32,7 +32,7 @@ fn client() -> &'static redis::Client {
 /// Get an async multiplexed connection.
 async fn conn() -> Result<redis::aio::MultiplexedConnection, String> {
     client()
-        .get_multiplexed_tokio_connection()
+        .get_multiplexed_async_connection()
         .await
         .map_err(|e| format!("Redis connection failed: {e}"))
 }

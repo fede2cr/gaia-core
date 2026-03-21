@@ -30,14 +30,14 @@ tower               = { version = "0.5", optional = true }
 tower-http          = { version = "0.6", features = ["fs", "cors"], optional = true }
 tracing             = { version = "0.1", optional = true }
 tracing-subscriber  = { version = "0.3", features = ["env-filter"], optional = true }
-reqwest             = { version = "0.12", features = ["json", "stream"], optional = true }
+reqwest             = { version = "0.13", features = ["json", "stream"], optional = true }
 http                = { version = "1", optional = true }
 hyper               = { version = "1", optional = true }
 hyper-util          = { version = "0.1", optional = true }
 http-body-util      = { version = "0.1", optional = true }
 libsql              = { version = "0.9", default-features = false, features = ["core"], optional = true }
-toml                = { version = "0.8", optional = true }
-redis               = { version = "0.27", features = ["tokio-comp"], optional = true }
+toml                = { version = "1", optional = true }
+redis               = { version = "1", features = ["tokio-comp"], optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
 wasm-bindgen              = { version = "0.2", optional = true }
