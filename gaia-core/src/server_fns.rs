@@ -161,6 +161,9 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
             .await
             .unwrap_or_default();
 
+        // Single processing container — check if it's running.
+        let proc_container_running = crate::containers::is_running("gaia-audio-processing").await;
+
         for model in &models {
             // Only show models that are enabled in Settings.
             let model_enabled = model_states
@@ -173,19 +176,21 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
                 continue;
             }
 
-            // Check if this model's processing container is toggled on.
-            let container_running = states
+            // Check if this model's processing is toggled on in the DB.
+            let container_enabled = states
                 .iter()
                 .find(|(s, k, _)| s == "audio" && *k == model.container_kind)
                 .map(|(_, _, e)| *e)
                 .unwrap_or(false);
 
+            // Model is "running" when its toggle is on AND the single
+            // processing container is actually running.
             audio.processing_models.push(
                 crate::config::AudioProcessingNode {
                     model_slug: model.slug.clone(),
                     model_name: model.name.clone(),
                     container_kind: model.container_kind.clone(),
-                    running: container_running,
+                    running: container_enabled && proc_container_running,
                 },
             );
         }
@@ -499,57 +504,84 @@ pub async fn get_audio_models() -> Result<Vec<AudioModelInfo>, ServerFnError> {
 
 /// Enable or disable an audio model in Settings.
 ///
-/// When a model is disabled, its processing container is also stopped.
+/// The change is persisted to SQLite and signalled to the processing
+/// container via Redis (`audio:enabled_models` SET).  The processing
+/// container checks this set before each analysis and skips disabled
+/// models — no container restart needed.
 #[server(prefix = "/api")]
 pub async fn toggle_audio_model(
     slug: String,
     enabled: bool,
 ) -> Result<Vec<AudioModelInfo>, ServerFnError> {
+    // Persist to SQLite (source of truth for next reboot).
     crate::db::set_audio_model_enabled(&slug, enabled)
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
 
-    if !enabled {
-        // Stop the processing container for this model.
-        let kind = crate::config::model_container_kind(&slug);
-        let name = crate::containers::container_name("audio", &kind);
-        crate::db::set_container_enabled("audio", &kind, false)
+    // Signal the running processing container via Redis.
+    if enabled {
+        crate::kv::enable_audio_model(&slug)
             .await
-            .ok();
-        if let Err(e) = crate::containers::stop(&name).await {
-            tracing::error!("Failed to stop container '{name}' for audio model '{slug}': {e}");
-        }
-        tracing::info!("Disabled audio model '{slug}' and stopped container '{name}'");
+            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+        tracing::info!("Enabled audio model '{slug}' (signalled via Redis)");
     } else {
-        tracing::info!("Enabled audio model '{slug}'");
+        crate::kv::disable_audio_model(&slug)
+            .await
+            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+        tracing::info!("Disabled audio model '{slug}' (signalled via Redis)");
     }
 
     get_audio_models().await
 }
 
-/// Toggle a specific audio processing-model container (start / stop).
+/// Toggle the single audio processing container (start / stop).
 ///
-/// Called from the project card per-model processing toggles.
+/// Called from the project card.  When starting, the container loads all
+/// model manifests and checks `audio:enabled_models` in Redis to decide
+/// which models to run.
 #[server(prefix = "/api")]
 pub async fn toggle_audio_processing(
     model_slug: String,
     enabled: bool,
 ) -> Result<Vec<ProjectTarget>, ServerFnError> {
+    // Persist per-model container state (still tracked for sync_with_db).
     let kind = crate::config::model_container_kind(&model_slug);
     crate::db::set_container_enabled("audio", &kind, enabled)
         .await
         .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
 
-    let name = crate::containers::container_name("audio", &kind);
+    // Update the Redis enabled set so the processing container sees the change.
     if enabled {
-        let name_bg = name.clone();
+        crate::kv::enable_audio_model(&model_slug)
+            .await
+            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    } else {
+        crate::kv::disable_audio_model(&model_slug)
+            .await
+            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
+    }
+
+    // Determine if the single processing container should run:
+    // it should be running if ANY audio processing model is enabled.
+    let states = crate::db::all_container_states()
+        .await
+        .unwrap_or_default();
+    let any_proc_enabled = states
+        .iter()
+        .any(|(s, k, e)| s == "audio" && k.starts_with("processing") && *e);
+
+    let name = "gaia-audio-processing";
+    let running = crate::containers::is_running(name).await;
+
+    if any_proc_enabled && !running {
+        let n = name.to_string();
         tokio::spawn(async move {
-            if let Err(e) = crate::containers::start(&name_bg).await {
-                tracing::error!("Background start of '{name_bg}' failed: {e}");
+            if let Err(e) = crate::containers::start(&n).await {
+                tracing::error!("Background start of '{n}' failed: {e}");
             }
         });
-    } else {
-        if let Err(e) = crate::containers::stop(&name).await {
+    } else if !any_proc_enabled && running {
+        if let Err(e) = crate::containers::stop(name).await {
             tracing::error!("Failed to stop container '{name}': {e}");
         }
     }

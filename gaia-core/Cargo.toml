@@ -37,6 +37,7 @@ hyper-util          = { version = "0.1", optional = true }
 http-body-util      = { version = "0.1", optional = true }
 libsql              = { version = "0.9", default-features = false, features = ["core"], optional = true }
 toml                = { version = "0.8", optional = true }
+redis               = { version = "0.27", features = ["tokio-comp"], optional = true }
 
 # ── Hydrate-only deps (WASM client) ─────────────────────────
 wasm-bindgen              = { version = "0.2", optional = true }
@@ -65,6 +66,7 @@ ssr = [
     "dep:http-body-util",
     "dep:libsql",
     "dep:toml",
+    "dep:redis",
 ]
 
 [package.metadata.leptos]

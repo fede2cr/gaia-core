@@ -366,16 +366,19 @@ fn project_slug_from_container(name: &str) -> String {
 ///
 /// Convention:  `gaia-{slug}-{kind}`
 ///
-/// For audio processing models, the `kind` may be `"processing:{model}"`
-/// which maps to `"gaia-audio-processing-{model}"`, except for the
-/// default BirdNET model where `"processing"` maps to the legacy name
-/// `"gaia-audio-processing"`.
+/// For the audio project, all processing models share a single container
+/// `"gaia-audio-processing"` — model enable/disable is handled via Redis
+/// signals rather than separate containers.
+///
+/// For the light project, each model still gets its own container:
+/// `"gaia-light-processing-{model}"`.
 ///
 /// Examples
 /// --------
 /// - `("audio", "capture")`           → `"gaia-audio-capture"`
-/// - `("audio", "processing")`        → `"gaia-audio-processing"` (BirdNET)
-/// - `("audio", "processing:perch")`  → `"gaia-audio-processing-perch"`
+/// - `("audio", "processing")`        → `"gaia-audio-processing"`
+/// - `("audio", "processing:perch")`  → `"gaia-audio-processing"`
+/// - `("light", "processing:speciesnet")` → `"gaia-light-processing-speciesnet"`
 /// - `("radio", "web")`               → `"gaia-radio-web"`
 pub fn container_name(slug: &str, kind: &str) -> String {
     // Legacy: the monolithic RMS container is still used for "processing"
@@ -383,7 +386,11 @@ pub fn container_name(slug: &str, kind: &str) -> String {
     if slug == "gmn" && kind == "processing" {
         return "rms".into();
     }
-    // Audio processing model containers: "processing:perch" → "gaia-audio-processing-perch"
+    // Audio processing: single container regardless of model.
+    if slug == "audio" && kind.starts_with("processing") {
+        return "gaia-audio-processing".into();
+    }
+    // Light processing model containers: "processing:speciesnet" → "gaia-light-processing-speciesnet"
     if let Some(model_slug) = kind.strip_prefix("processing:") {
         return format!("gaia-{slug}-processing-{model_slug}");
     }
@@ -580,16 +587,8 @@ pub async fn start(name: &str) -> Result<(), String> {
     if name == "gaia-audio-capture" {
         build_audio_capture_args(&mut args).await;
     }
-    if name.starts_with("gaia-audio-processing") {
-        // Derive the model slug from the container name.
-        let model_slug = if name == "gaia-audio-processing" {
-            "birdnet".to_string()
-        } else {
-            name.strip_prefix("gaia-audio-processing-")
-                .unwrap_or("birdnet")
-                .to_string()
-        };
-        build_audio_processing_args(&mut args, &model_slug).await;
+    if name == "gaia-audio-processing" {
+        build_audio_processing_args(&mut args).await;
         // Inject GPU passthrough if hardware is available.
         if let Some(ref backend) = gpu_backend {
             inject_gpu_args(&mut args, backend).await;
@@ -638,9 +637,9 @@ pub async fn start(name: &str) -> Result<(), String> {
         tracing::info!("Container '{name}' started");
         set_status(name, "running");
 
-        // For audio processing containers, validate model loading in the
+        // For the audio processing container, validate model loading in the
         // background so we can report issues to the operator.
-        if name.starts_with("gaia-audio-processing") {
+        if name == "gaia-audio-processing" {
             let cname = name.to_string();
             tokio::spawn(async move {
                 validate_audio_processing(&cname).await;
@@ -686,20 +685,18 @@ async fn build_audio_capture_args(args: &mut Vec<String>) {
     }
 }
 
-/// Inject the station latitude/longitude and model information into
-/// the processing container so the model can filter species by
-/// geographic range and identify which model to run.
+/// Inject the station latitude/longitude into the processing container
+/// so the model can filter species by geographic range.
 ///
-/// Also passes `PROCESSING_NODE_COUNT` so the container knows how many
-/// sibling processing nodes exist (used for recording lifecycle: a
-/// recording is only deleted when all nodes have analysed it).
-async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
+/// Model enable/disable is handled via Redis signals — no per-model
+/// environment variables are needed.
+async fn build_audio_processing_args(args: &mut Vec<String>) {
     let lat = crate::db::get_setting("latitude").await.ok().flatten();
     let lon = crate::db::get_setting("longitude").await.ok().flatten();
 
     match (lat, lon) {
         (Some(la), Some(lo)) if !la.is_empty() && !lo.is_empty() => {
-            tracing::info!("gaia-audio-processing ({model_slug}): LATITUDE={la}, LONGITUDE={lo}");
+            tracing::info!("gaia-audio-processing: LATITUDE={la}, LONGITUDE={lo}");
             args.push("-e".into());
             args.push(format!("LATITUDE={la}"));
             args.push("-e".into());
@@ -707,19 +704,11 @@ async fn build_audio_processing_args(args: &mut Vec<String>, model_slug: &str) {
         }
         _ => {
             tracing::warn!(
-                "gaia-audio-processing ({model_slug}): no station location configured -- \
+                "gaia-audio-processing: no station location configured -- \
                  model will not filter by geographic range"
             );
         }
     }
-
-    // Tell the container which model to run.
-    args.push("-e".into());
-    args.push(format!("MODEL_SLUGS={model_slug}"));
-
-    // Instance identifier for multi-instance coordination.
-    args.push("-e".into());
-    args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 
     // Number of parallel processing threads (default handled by container).
     if let Ok(Some(threads)) = crate::db::get_setting("processing_threads").await {
@@ -898,7 +887,7 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
 /// detected.  A single image handles both GPU and CPU — ONNX Runtime
 /// selects the best execution provider at session creation time.
 pub fn wants_gpu_passthrough(name: &str) -> bool {
-    name.starts_with("gaia-audio-processing") || name.starts_with("gaia-light-processing")
+    name == "gaia-audio-processing" || name.starts_with("gaia-light-processing")
 }
 
 /// Probe which GPU backend is available on the host.
@@ -1151,17 +1140,59 @@ pub async fn sync_with_db() {
         }
     };
 
+    // ── Seed Redis enabled-model sets from DB ────────────────────────
+    // Must happen before starting the processing container so it reads
+    // the correct set of enabled models.
+    if let Err(e) = crate::kv::seed_from_db().await {
+        tracing::warn!("Could not seed Redis enabled models from DB: {e}");
+    }
+
+    // ── Audio processing: single container for all models ────────────
+    // Determine whether the single gaia-audio-processing container
+    // should be running (true if ANY audio processing kind is enabled).
+    let audio_proc_should_run = states
+        .iter()
+        .any(|(slug, kind, enabled)| slug == "audio" && kind.starts_with("processing") && *enabled);
+
+    let audio_proc_name = "gaia-audio-processing";
+    let audio_proc_running = is_running(audio_proc_name).await;
+    match (audio_proc_should_run, audio_proc_running) {
+        (true, true) => {
+            set_status(audio_proc_name, "running");
+        }
+        (true, false) => {
+            let n = audio_proc_name.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = start(&n).await {
+                    tracing::warn!("Startup sync: could not start {n}: {e}");
+                }
+            });
+        }
+        (false, true) => {
+            if let Err(e) = stop(audio_proc_name).await {
+                tracing::warn!("Startup sync: could not stop {audio_proc_name}: {e}");
+            }
+        }
+        (false, false) => {
+            set_status(audio_proc_name, "stopped");
+        }
+    }
+
+    // ── All other containers ─────────────────────────────────────────
     for (slug, kind, enabled) in &states {
+        // Skip audio processing — handled above via the single container.
+        if slug == "audio" && kind.starts_with("processing") {
+            continue;
+        }
+
         let name = container_name(slug, kind);
         let running = is_running(&name).await;
 
         match (*enabled, running) {
             (true, true) => {
-                // Already running from a previous session.
                 set_status(&name, "running");
             }
             (true, false) => {
-                // Should be running but isn't -- start in background.
                 let name = name.clone();
                 tokio::spawn(async move {
                     if let Err(e) = start(&name).await {
@@ -1231,7 +1262,7 @@ async fn validate_audio_processing(name: &str) {
         }
 
         if combined.contains("No models loaded") {
-            let msg = format!("warning: no models loaded -- check manifest and MODEL_SLUGS");
+            let msg = format!("warning: no models loaded -- check manifest files in /models");
             tracing::warn!("[{name}] {msg}");
             set_status(name, &format!("running ({msg})"));
             return;

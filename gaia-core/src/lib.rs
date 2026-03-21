@@ -13,6 +13,7 @@ cfg_if::cfg_if! {
         pub mod db;
         pub mod discovery;
         pub mod hardware;
+        pub mod kv;
         pub mod proxy;
         pub mod updates;
     }
