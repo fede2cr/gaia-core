@@ -154,52 +154,16 @@ pub async fn get_projects() -> Result<Vec<ProjectTarget>, ServerFnError> {
         }
     }
 
-    // Build per-model processing nodes for the audio project.
+    // Audio processing: single container toggle (models configured in Settings).
     if let Some(audio) = targets.iter_mut().find(|t| t.slug == "audio") {
-        let models = crate::config::default_audio_models();
-        let model_states = crate::db::all_audio_model_states()
-            .await
-            .unwrap_or_default();
-
-        // Single processing container — check if it's running.
-        let proc_container_running = crate::containers::is_running("gaia-audio-processing").await;
-
-        for model in &models {
-            // Only show models that are enabled in Settings.
-            let model_enabled = model_states
-                .iter()
-                .find(|(s, _)| s == &model.slug)
-                .map(|(_, e)| *e)
-                .unwrap_or(model.enabled);
-
-            if !model_enabled {
-                continue;
-            }
-
-            // Check if this model's processing is toggled on in the DB.
-            let container_enabled = states
-                .iter()
-                .find(|(s, k, _)| s == "audio" && *k == model.container_kind)
-                .map(|(_, _, e)| *e)
-                .unwrap_or(false);
-
-            // Model is "running" when its toggle is on AND the single
-            // processing container is actually running.
-            audio.processing_models.push(
-                crate::config::AudioProcessingNode {
-                    model_slug: model.slug.clone(),
-                    model_name: model.name.clone(),
-                    container_kind: model.container_kind.clone(),
-                    running: container_enabled && proc_container_running,
-                },
-            );
-        }
-
-        // processing_enabled is true if ANY model node is running.
-        audio.processing_enabled = audio
-            .processing_models
+        // processing_enabled reflects the DB toggle for (audio, processing).
+        // The container runs independently of which models are enabled.
+        let proc_enabled = states
             .iter()
-            .any(|n| n.running);
+            .find(|(s, k, _)| s == "audio" && k == "processing")
+            .map(|(_, _, e)| *e)
+            .unwrap_or(false);
+        audio.processing_enabled = proc_enabled;
     }
 
     // Build per-model processing nodes for the light (camera-trap) project.
@@ -532,66 +496,6 @@ pub async fn toggle_audio_model(
     }
 
     get_audio_models().await
-}
-
-/// Toggle the single audio processing container (start / stop).
-///
-/// Called from the project card.  When starting, the container loads all
-/// model manifests and checks `audio:enabled_models` in Redis to decide
-/// which models to run.
-#[server(prefix = "/api")]
-pub async fn toggle_audio_processing(
-    model_slug: String,
-    enabled: bool,
-) -> Result<Vec<ProjectTarget>, ServerFnError> {
-    // Persist per-model container state (still tracked for sync_with_db).
-    let kind = crate::config::model_container_kind(&model_slug);
-    crate::db::set_container_enabled("audio", &kind, enabled)
-        .await
-        .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
-
-    // Update the Redis enabled set so the processing container sees the change.
-    if enabled {
-        crate::kv::enable_audio_model(&model_slug)
-            .await
-            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
-    } else {
-        crate::kv::disable_audio_model(&model_slug)
-            .await
-            .map_err(|e| ServerFnError::<server_fn::error::NoCustomError>::ServerError(e))?;
-    }
-
-    // Determine if the single processing container should run:
-    // it should be running if ANY audio processing model is enabled.
-    let states = crate::db::all_container_states()
-        .await
-        .unwrap_or_default();
-    let any_proc_enabled = states
-        .iter()
-        .any(|(s, k, e)| s == "audio" && k.starts_with("processing") && *e);
-
-    let name = "gaia-audio-processing";
-    let running = crate::containers::is_running(name).await;
-
-    if any_proc_enabled && !running {
-        let n = name.to_string();
-        tokio::spawn(async move {
-            if let Err(e) = crate::containers::start(&n).await {
-                tracing::error!("Background start of '{n}' failed: {e}");
-            }
-        });
-    } else if !any_proc_enabled && running {
-        if let Err(e) = crate::containers::stop(name).await {
-            tracing::error!("Failed to stop container '{name}': {e}");
-        }
-    }
-
-    tracing::info!(
-        "Audio processing model '{model_slug}' {}",
-        if enabled { "enabled" } else { "disabled" }
-    );
-
-    get_projects().await
 }
 
 // ── Debug logging ────────────────────────────────────────────────────────

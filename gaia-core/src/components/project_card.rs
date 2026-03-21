@@ -10,7 +10,7 @@ use leptos::prelude::{
 
 use crate::components::toggle::ToggleSwitch;
 use crate::server_fns::{
-    toggle_audio_processing, toggle_container, toggle_light_processing, CaptureHealth,
+    toggle_container, toggle_light_processing, CaptureHealth,
     ImageUpdate,
 };
 use crate::config::AudioProcessingNode;
@@ -294,22 +294,18 @@ pub fn ProjectCard(
 
     let proxy_href = format!("/proxy/{slug_for_link}/");
 
-    // Build model toggle views (audio and light projects).
+    // Build model toggle views (light project only — audio uses the
+    // standard "Processing" toggle, with models managed in Settings).
     let slug_for_models = slug.clone();
     let model_toggle_views: Vec<_> = model_nodes
         .into_iter()
         .map(|(model_slug, model_name, container_kind, running, set_running)| {
             let model_slug_action = model_slug.clone();
-            let is_light = slug_for_models == "light";
             let model_action = Action::new(move |new_state: &bool| {
                 let slug = model_slug_action.clone();
                 let new_state = *new_state;
                 async move {
-                    if is_light {
-                        let _ = toggle_light_processing(slug, new_state).await;
-                    } else {
-                        let _ = toggle_audio_processing(slug, new_state).await;
-                    }
+                    let _ = toggle_light_processing(slug, new_state).await;
                 }
             });
 

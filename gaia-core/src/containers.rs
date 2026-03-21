@@ -488,6 +488,13 @@ pub async fn start(name: &str) -> Result<(), String> {
         }
     }
 
+    // ── Seed Redis with enabled models before audio processing starts ─
+    if name == "gaia-audio-processing" {
+        if let Err(e) = crate::kv::seed_from_db().await {
+            tracing::warn!("Could not seed Redis enabled models: {e}");
+        }
+    }
+
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
@@ -1140,19 +1147,17 @@ pub async fn sync_with_db() {
         }
     };
 
-    // ── Seed Redis enabled-model sets from DB ────────────────────────
-    // Must happen before starting the processing container so it reads
-    // the correct set of enabled models.
-    if let Err(e) = crate::kv::seed_from_db().await {
-        tracing::warn!("Could not seed Redis enabled models from DB: {e}");
-    }
-
-    // ── Audio processing: single container for all models ────────────
-    // Determine whether the single gaia-audio-processing container
-    // should be running (true if ANY audio processing kind is enabled).
+    // ── Audio processing: single container, toggled from the dashboard ─
+    // The container runs when its DB toggle (audio, "processing") is on.
+    // Which models are active is a separate concern (Settings → Redis).
     let audio_proc_should_run = states
         .iter()
-        .any(|(slug, kind, enabled)| slug == "audio" && kind.starts_with("processing") && *enabled);
+        .any(|(slug, kind, enabled)| slug == "audio" && kind == "processing" && *enabled);
+
+    // The coordinator is needed by processing, web, and capture containers.
+    let any_audio_enabled = states
+        .iter()
+        .any(|(slug, _, enabled)| slug == "audio" && *enabled);
 
     let audio_proc_name = "gaia-audio-processing";
     let audio_proc_running = is_running(audio_proc_name).await;
@@ -1167,6 +1172,25 @@ pub async fn sync_with_db() {
             if let Err(e) = stop(&legacy_name).await {
                 tracing::warn!("Could not stop legacy container '{legacy_name}': {e}");
             }
+        }
+    }
+
+    // ── Ensure the coordinator is running before seeding Redis ────────
+    // The coordinator (Valkey) is a dependency of audio containers.
+    // We must start it before we can seed the enabled-model sets.
+    if any_audio_enabled && !is_running("gaia-audio-coordinator").await {
+        tracing::info!("Starting coordinator before seeding Redis");
+        if let Err(e) = start("gaia-audio-coordinator").await {
+            tracing::warn!("Could not start coordinator: {e}");
+        }
+    }
+
+    // ── Seed Redis enabled-model sets from DB ────────────────────────
+    // Must happen after the coordinator is running and before the
+    // processing container starts, so it reads the correct model set.
+    if any_audio_enabled {
+        if let Err(e) = crate::kv::seed_from_db().await {
+            tracing::warn!("Could not seed Redis enabled models from DB: {e}");
         }
     }
 
