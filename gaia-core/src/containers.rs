@@ -18,6 +18,7 @@ use std::sync::{OnceLock, RwLock};
 
 use serde::Deserialize;
 use tokio::process::Command;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Which container runtime is available on this system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,6 +432,20 @@ async fn remove(cmd: &str, name: &str) {
     }
 }
 
+/// Serialises concurrent attempts to start the same service dependency.
+/// Without this, two callers (e.g. web + processing starting at the same
+/// time) would both race through `remove → run` and the second would
+/// hit "name already in use".
+static DEP_LOCKS: OnceLock<HashMap<&'static str, TokioMutex<()>>> = OnceLock::new();
+
+fn dep_locks() -> &'static HashMap<&'static str, TokioMutex<()>> {
+    DEP_LOCKS.get_or_init(|| {
+        let mut m = HashMap::new();
+        m.insert("gaia-audio-coordinator", TokioMutex::new(()));
+        m
+    })
+}
+
 /// Return the service dependencies that must be running before `name`
 /// can start.  Returns an empty slice when there are none.
 fn service_deps(name: &str) -> &'static [&'static str] {
@@ -453,6 +468,12 @@ fn service_deps(name: &str) -> &'static [&'static str] {
 pub async fn start(name: &str) -> Result<(), String> {
     // ── Ensure service dependencies are running ──────────────────────
     for dep in service_deps(name) {
+        // Acquire a per-dep lock so concurrent callers don't race.
+        let lock = dep_locks().get(dep);
+        let _guard = match lock {
+            Some(m) => Some(m.lock().await),
+            None => None,
+        };
         if !is_running(dep).await {
             tracing::info!("Starting dependency '{dep}' required by '{name}'");
             // Use Box::pin to allow the recursive async call.
