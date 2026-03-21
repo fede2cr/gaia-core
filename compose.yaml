@@ -61,8 +61,28 @@ services:
     container_name: gaia-audio-processing
     profiles: ["managed"]
     network_mode: host
+    depends_on:
+      gaia-audio-coordinator:
+        condition: service_healthy
     volumes:
       - gaia-audio-data:/data
+    restart: unless-stopped
+
+  gaia-audio-coordinator:
+    image: valkey/valkey:8.1-alpine
+    container_name: gaia-audio-coordinator
+    profiles: ["managed"]
+    network_mode: host
+    command: >
+      sh -c "mkdir -p /data/valkey && valkey-server --appendonly yes --dir /data/valkey"
+    volumes:
+      - gaia-audio-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 3s
     restart: unless-stopped
 
   gaia-audio-web:
@@ -70,6 +90,9 @@ services:
     container_name: gaia-audio-web
     profiles: ["managed"]
     network_mode: host
+    depends_on:
+      gaia-audio-coordinator:
+        condition: service_healthy
     environment:
       - LEPTOS_SITE_ADDR=0.0.0.0:3000
     volumes:

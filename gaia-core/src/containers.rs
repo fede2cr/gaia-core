@@ -205,6 +205,17 @@ fn builtin_config() -> ContainerConfig {
         ..Default::default()
     });
 
+    m.insert("gaia-audio-coordinator".into(), ContainerSpec {
+        image: "valkey/valkey:8.1-alpine".into(),
+        volumes: vec!["gaia-audio-data:/data".into()],
+        extra_args: vec![
+            "--entrypoint".into(), "sh".into(),
+            "-c".into(),
+            "mkdir -p /data/valkey && valkey-server --appendonly yes --dir /data/valkey".into(),
+        ],
+        ..Default::default()
+    });
+
     m.insert("gaia-audio-processing".into(), ContainerSpec {
         image: "docker.io/fede2/gaia-audio-processing".into(),
         volumes: vec![
@@ -416,21 +427,51 @@ async fn remove(cmd: &str, name: &str) {
     }
 }
 
+/// Return the service dependencies that must be running before `name`
+/// can start.  Returns an empty slice when there are none.
+fn service_deps(name: &str) -> &'static [&'static str] {
+    // Audio web & processing containers need the coordinator (Valkey).
+    if name == "gaia-audio-web"
+        || name.starts_with("gaia-audio-processing")
+    {
+        return &["gaia-audio-coordinator"];
+    }
+    &[]
+}
+
 /// Start a managed container: **pull → remove → run**.
 ///
 /// This always pulls the latest image so that enabling a container from
 /// the dashboard also updates it.
+///
+/// If the container has service dependencies (e.g. audio-web needs the
+/// coordinator), they are started first automatically.
 pub async fn start(name: &str) -> Result<(), String> {
+    // ── Ensure service dependencies are running ──────────────────────
+    for dep in service_deps(name) {
+        if !is_running(dep).await {
+            tracing::info!("Starting dependency '{dep}' required by '{name}'");
+            // Use Box::pin to allow the recursive async call.
+            Box::pin(start(dep)).await?;
+        }
+    }
+
     let rt = runtime().await;
     let cmd = runtime_cmd(rt);
 
     let mut spec = spec_for(name).ok_or_else(|| format!("Unknown container: {name}"))?;
 
-    // For processing containers, detect ROCm hardware early so we can
+    // For processing containers, detect GPU hardware early so we can
     // inject GPU passthrough arguments.  A single image handles both
     // GPU and CPU: ONNX Runtime selects the best available execution
-    // provider (MIGraphX → ROCm → CPU) at session creation time.
-    let rocm_available = wants_rocm_passthrough(name) && detect_rocm_available().await;
+    // provider at session creation time.
+    //
+    // Priority: NVIDIA (TensorRT → CUDA) > AMD (MIGraphX → ROCm) > CPU
+    let gpu_backend = if wants_gpu_passthrough(name) {
+        detect_gpu_backend().await
+    } else {
+        None
+    };
 
     // 1. Pull the latest image.
     set_status(name, "pulling");
@@ -524,9 +565,9 @@ pub async fn start(name: &str) -> Result<(), String> {
                 .to_string()
         };
         build_audio_processing_args(&mut args, &model_slug).await;
-        // Inject ROCm GPU passthrough if hardware is available.
-        if rocm_available {
-            inject_rocm_args(&mut args).await;
+        // Inject GPU passthrough if hardware is available.
+        if let Some(ref backend) = gpu_backend {
+            inject_gpu_args(&mut args, backend).await;
         }
     }
     if name == "gaia-gmn-config" {
@@ -546,9 +587,9 @@ pub async fn start(name: &str) -> Result<(), String> {
             .unwrap_or("pytorch-wildlife")
             .to_string();
         build_light_processing_args(&mut args, &model_slug).await;
-        // Inject ROCm GPU passthrough if hardware is available.
-        if rocm_available {
-            inject_rocm_args(&mut args).await;
+        // Inject GPU passthrough if hardware is available.
+        if let Some(ref backend) = gpu_backend {
+            inject_gpu_args(&mut args, backend).await;
         }
     }
     // Image (must be last)
@@ -822,23 +863,43 @@ async fn build_light_processing_args(args: &mut Vec<String>, model_slug: &str) {
     args.push(format!("PROCESSING_INSTANCE={model_slug}"));
 }
 
-/// Returns `true` for containers that benefit from ROCm GPU passthrough
-/// (device mappings, `GAIA_ACCEL=rocm` env var) when AMD GPU hardware is
+/// Returns `true` for containers that benefit from GPU passthrough
+/// (device mappings, `GAIA_ACCEL` env var) when GPU hardware is
 /// detected.  A single image handles both GPU and CPU — ONNX Runtime
 /// selects the best execution provider at session creation time.
-pub fn wants_rocm_passthrough(name: &str) -> bool {
+pub fn wants_gpu_passthrough(name: &str) -> bool {
     name.starts_with("gaia-audio-processing") || name.starts_with("gaia-light-processing")
 }
 
-/// Probe whether ROCm-capable AMD GPUs are present on the host.
-pub async fn detect_rocm_available() -> bool {
+/// Probe which GPU backend is available on the host.
+///
+/// Returns `Some(AccelBackend)` for the best backend found, preferring
+/// NVIDIA (TensorRT/CUDA) over AMD (MIGraphX/ROCm).  Returns `None`
+/// when no GPUs are detected.
+pub async fn detect_gpu_backend() -> Option<crate::hardware::AccelBackend> {
+    use crate::hardware::AccelBackend;
     let gpus = crate::hardware::detect_gpus().await;
     if gpus.is_empty() {
-        tracing::debug!("detect_rocm_available: no GPUs detected");
-        return false;
+        tracing::debug!("detect_gpu_backend: no GPUs detected");
+        return None;
     }
-    tracing::debug!("detect_rocm_available: {} GPU(s) found", gpus.len());
-    true
+    // Prefer NVIDIA over AMD when both are present.
+    if gpus.iter().any(|g| g.backend == AccelBackend::Cuda) {
+        return Some(AccelBackend::Cuda);
+    }
+    if gpus.iter().any(|g| g.backend == AccelBackend::Rocm) {
+        return Some(AccelBackend::Rocm);
+    }
+    None
+}
+
+/// Dispatch to the correct GPU injection function based on backend.
+async fn inject_gpu_args(args: &mut Vec<String>, backend: &crate::hardware::AccelBackend) {
+    use crate::hardware::AccelBackend;
+    match backend {
+        AccelBackend::Rocm => inject_rocm_args(args).await,
+        AccelBackend::Cuda => inject_cuda_args(args).await,
+    }
 }
 
 /// Inject ROCm device passthrough + environment variables into
@@ -923,6 +984,78 @@ async fn inject_rocm_args(args: &mut Vec<String>) {
     tracing::debug!(
         "inject_rocm_args: injected env GAIA_ACCEL=rocm ROCM_VISIBLE_DEVICES={}",
         render_nodes.join(",")
+    );
+}
+
+/// Inject NVIDIA CUDA / TensorRT passthrough into container `run`
+/// arguments.
+///
+/// When NVIDIA GPUs are found, the following are added:
+///
+///   - `--device /dev/nvidia0` (and further GPU device nodes)
+///   - `--device /dev/nvidiactl` / `--device /dev/nvidia-uvm` (control nodes)
+///   - `-e GAIA_ACCEL=cuda` — signals the processing binary to use the
+///     TensorRT → CUDA → CPU execution provider chain
+///   - `-e NVIDIA_VISIBLE_DEVICES=all` — for NVIDIA Container Toolkit
+///   - `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility`
+///   - `--security-opt label=disable`
+///
+/// This supports both direct device passthrough (Podman/Docker) and the
+/// NVIDIA Container Toolkit (CDI) approach.
+async fn inject_cuda_args(args: &mut Vec<String>) {
+    let gpus = crate::hardware::detect_gpus().await;
+    let nvidia_gpus: Vec<_> = gpus
+        .iter()
+        .filter(|g| g.backend == crate::hardware::AccelBackend::Cuda)
+        .collect();
+
+    tracing::info!(
+        "CUDA/TensorRT acceleration available — injecting GPU passthrough for {} NVIDIA GPU(s)",
+        nvidia_gpus.len()
+    );
+
+    // Pass through each /dev/nvidia<N> device node.
+    for gpu in &nvidia_gpus {
+        args.push("--device".into());
+        args.push(gpu.render_node.clone());
+    }
+
+    // Control and UVM device nodes.
+    for dev in &["/dev/nvidiactl", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools"] {
+        if tokio::fs::try_exists(dev).await.unwrap_or(false) {
+            args.push("--device".into());
+            args.push((*dev).to_string());
+        }
+    }
+
+    // Disable SELinux label confinement (GPU access fails otherwise).
+    args.push("--security-opt".into());
+    args.push("label=disable".into());
+
+    // Tell the processing binary to use the CUDA / TensorRT execution
+    // provider chain.
+    args.push("-e".into());
+    args.push("GAIA_ACCEL=cuda".into());
+
+    // NVIDIA Container Toolkit environment variables.  These are picked
+    // up by the nvidia-container-runtime hook (if installed) and trigger
+    // automatic GPU device injection + driver library mounting.
+    args.push("-e".into());
+    args.push("NVIDIA_VISIBLE_DEVICES=all".into());
+    args.push("-e".into());
+    args.push("NVIDIA_DRIVER_CAPABILITIES=compute,utility".into());
+
+    let device_ids: Vec<String> = nvidia_gpus
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i.to_string())
+        .collect();
+    args.push("-e".into());
+    args.push(format!("CUDA_VISIBLE_DEVICES={}", device_ids.join(",")));
+
+    tracing::debug!(
+        "inject_cuda_args: injected env GAIA_ACCEL=cuda CUDA_VISIBLE_DEVICES={}",
+        device_ids.join(",")
     );
 }
 

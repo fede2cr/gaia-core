@@ -35,6 +35,8 @@ pub struct HwDevice {
 pub enum AccelBackend {
     /// AMD ROCm (MIGraphX / HIP) — `/dev/kfd` + `/dev/dri` present.
     Rocm,
+    /// NVIDIA CUDA (TensorRT → CUDA → CPU) — `/dev/nvidia*` present.
+    Cuda,
 }
 
 /// A detected GPU with optional acceleration info.
@@ -369,6 +371,14 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
 
 // ── GPU / accelerator detection ──────────────────────────────────────────
 
+/// Detect all GPUs — AMD (ROCm) and NVIDIA (CUDA/TensorRT).
+pub async fn detect_gpus() -> Vec<GpuInfo> {
+    let (amd, nvidia) = tokio::join!(detect_amd_gpus(), detect_nvidia_gpus());
+    let mut all = amd;
+    all.extend(nvidia);
+    all
+}
+
 /// Detect AMD GPUs with ROCm support.
 ///
 /// Checks for the presence of `/dev/kfd` (the ROCm kernel-mode driver)
@@ -377,7 +387,7 @@ pub async fn detect_cameras() -> Vec<HwDevice> {
 ///
 /// The human-readable GPU name is read from the DRM subsystem or from
 /// `rocm-smi` output when available.
-pub async fn detect_gpus() -> Vec<GpuInfo> {
+async fn detect_amd_gpus() -> Vec<GpuInfo> {
     tracing::debug!("GPU detection: starting scan");
 
     // Check for the ROCm / KFD kernel module.
@@ -473,6 +483,127 @@ pub async fn detect_gpus() -> Vec<GpuInfo> {
     }
 
     gpus
+}
+
+/// Detect NVIDIA GPUs with CUDA / TensorRT support.
+///
+/// Checks for `/dev/nvidia0` (the first GPU device node).  Enumerates
+/// all `/dev/nvidia[0-9]+` nodes and reads the human-readable label
+/// from `/proc/driver/nvidia/gpus/*/information`.
+///
+/// This covers systems with the NVIDIA proprietary driver or the
+/// NVIDIA Container Toolkit (CDI).  No `nvidia-smi` binary is required.
+async fn detect_nvidia_gpus() -> Vec<GpuInfo> {
+    tracing::debug!("NVIDIA GPU detection: starting scan");
+
+    // Quick bail-out: no NVIDIA kernel module loaded.
+    let dev_nvidia0 = tokio::fs::try_exists("/dev/nvidia0").await.unwrap_or(false);
+    let sys_nvidia = tokio::fs::try_exists("/sys/module/nvidia").await.unwrap_or(false);
+    tracing::debug!(
+        "NVIDIA GPU detection: /dev/nvidia0={dev_nvidia0} /sys/module/nvidia={sys_nvidia}"
+    );
+    if !dev_nvidia0 && !sys_nvidia {
+        tracing::debug!("No NVIDIA indicators found");
+        return vec![];
+    }
+
+    let mut gpus = Vec::new();
+
+    // Enumerate /dev/nvidia[0-9]+
+    let mut entries = match tokio::fs::read_dir("/dev").await {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("NVIDIA GPU detection: cannot read /dev: {e}");
+            return gpus;
+        }
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        // Match nvidia0, nvidia1, … (not nvidiactl, nvidia-uvm, etc.)
+        let num_str = match name_str.strip_prefix("nvidia") {
+            Some(rest) if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) => rest,
+            _ => continue,
+        };
+
+        let device_idx: u32 = match num_str.parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+
+        let dev_path = format!("/dev/{name_str}");
+        let label = read_nvidia_gpu_label(device_idx).await;
+
+        tracing::debug!(
+            "NVIDIA GPU detection: found GPU device={dev_path} label={label}"
+        );
+        // For NVIDIA GPUs the render_node stores the device path (/dev/nvidia0)
+        // and card_node is None (NVIDIA doesn't use the DRM render node model
+        // in the same way as AMD).
+        gpus.push(GpuInfo {
+            render_node: dev_path,
+            card_node: None,
+            label,
+            backend: AccelBackend::Cuda,
+        });
+    }
+
+    if gpus.is_empty() {
+        tracing::info!("NVIDIA module loaded but no /dev/nvidia* device nodes found");
+    } else {
+        tracing::info!(
+            "Detected {} NVIDIA GPU(s) with CUDA support: {:?}",
+            gpus.len(),
+            gpus.iter().map(|g| &g.label).collect::<Vec<_>>()
+        );
+    }
+
+    gpus
+}
+
+/// Read the GPU label from the NVIDIA proc interface.
+///
+/// `/proc/driver/nvidia/gpus/0000:XX:XX.X/information` contains a
+/// `Model:` line.  We also try `nvidia-smi` as a fallback.
+async fn read_nvidia_gpu_label(idx: u32) -> String {
+    // Method 1: scan /proc/driver/nvidia/gpus/*/information
+    if let Ok(mut gpus_dir) = tokio::fs::read_dir("/proc/driver/nvidia/gpus").await {
+        let mut found_idx: u32 = 0;
+        while let Ok(Some(entry)) = gpus_dir.next_entry().await {
+            let info_path = entry.path().join("information");
+            if let Ok(content) = tokio::fs::read_to_string(&info_path).await {
+                if found_idx == idx {
+                    for line in content.lines() {
+                        if let Some(model) = line.strip_prefix("Model:") {
+                            let name = model.trim().to_string();
+                            if !name.is_empty() {
+                                return name;
+                            }
+                        }
+                    }
+                }
+                found_idx += 1;
+            }
+        }
+    }
+
+    // Method 2: try nvidia-smi
+    if let Ok(output) = Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader", &format!("--id={idx}")])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+    {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
+    format!("NVIDIA GPU #{idx}")
 }
 
 /// Try to read a human-readable label for a GPU from sysfs.
