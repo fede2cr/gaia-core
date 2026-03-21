@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
 
   gaia-audio-coordinator:
-    image: valkey/valkey:8.1-alpine
+    image: docker.io/valkey/valkey:8.1-alpine
     container_name: gaia-audio-coordinator
     profiles: ["managed"]
     network_mode: host

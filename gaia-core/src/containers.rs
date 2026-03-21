@@ -94,6 +94,9 @@ pub struct ContainerSpec {
     privileged: bool,
     #[serde(default)]
     extra_args: Vec<String>,
+    /// Arguments appended **after** the image (the container CMD).
+    #[serde(default)]
+    command: Vec<String>,
     #[serde(default = "default_restart")]
     restart: String,
 }
@@ -112,6 +115,7 @@ impl Default for ContainerSpec {
             group_add: vec![],
             privileged: false,
             extra_args: vec![],
+            command: vec![],
             restart: default_restart(),
         }
     }
@@ -206,10 +210,10 @@ fn builtin_config() -> ContainerConfig {
     });
 
     m.insert("gaia-audio-coordinator".into(), ContainerSpec {
-        image: "valkey/valkey:8.1-alpine".into(),
+        image: "docker.io/valkey/valkey:8.1-alpine".into(),
         volumes: vec!["gaia-audio-data:/data".into()],
-        extra_args: vec![
-            "--entrypoint".into(), "sh".into(),
+        extra_args: vec!["--entrypoint".into(), "sh".into()],
+        command: vec![
             "-c".into(),
             "mkdir -p /data/valkey && valkey-server --appendonly yes --dir /data/valkey".into(),
         ],
@@ -592,8 +596,13 @@ pub async fn start(name: &str) -> Result<(), String> {
             inject_gpu_args(&mut args, backend).await;
         }
     }
-    // Image (must be last)
+    // Image (must be last positional arg before the command)
     args.push(spec.image);
+
+    // Container CMD — arguments that go after the image.
+    for a in &spec.command {
+        args.push(a.clone());
+    }
 
     tracing::info!("Running container '{name}' via {cmd}");
     tracing::debug!("Container '{name}' full args: {args:?}");

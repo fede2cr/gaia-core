@@ -31,9 +31,10 @@ volumes = [
 group_add = ["audio"]
 
 [gaia-audio-coordinator]
-image   = "valkey/valkey:8.1-alpine"
-volumes = ["gaia-audio-data:/data"]
-extra_args = ["--entrypoint", "sh", "-c", "mkdir -p /data/valkey && valkey-server --appendonly yes --dir /data/valkey"]
+image      = "docker.io/valkey/valkey:8.1-alpine"
+volumes    = ["gaia-audio-data:/data"]
+extra_args = ["--entrypoint", "sh"]
+command    = ["-c", "mkdir -p /data/valkey && valkey-server --appendonly yes --dir /data/valkey"]
 
 [gaia-audio-processing]
 image   = "docker.io/fede2/gaia-audio-processing"
