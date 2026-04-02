@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
+use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::process::Command;
@@ -490,7 +491,7 @@ pub async fn start(name: &str) -> Result<(), String> {
 
     // ── Seed Redis with enabled models before audio processing starts ─
     if name == "gaia-audio-processing" {
-        if let Err(e) = crate::kv::seed_from_db().await {
+        if let Err(e) = crate::kv::seed_from_db_with_retry(30, Duration::from_millis(500)).await {
             tracing::warn!("Could not seed Redis enabled models: {e}");
         }
     }
@@ -1189,7 +1190,7 @@ pub async fn sync_with_db() {
     // Must happen after the coordinator is running and before the
     // processing container starts, so it reads the correct model set.
     if any_audio_enabled {
-        if let Err(e) = crate::kv::seed_from_db().await {
+        if let Err(e) = crate::kv::seed_from_db_with_retry(30, Duration::from_millis(500)).await {
             tracing::warn!("Could not seed Redis enabled models from DB: {e}");
         }
     }

@@ -12,6 +12,7 @@
 
 use redis::AsyncCommands;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 static CLIENT: OnceLock<redis::Client> = OnceLock::new();
 
@@ -182,4 +183,52 @@ pub async fn seed_from_db() -> Result<(), String> {
     tracing::info!("kv: light enabled models = {light_enabled:?}");
 
     Ok(())
+}
+
+/// Seed Redis enabled-model sets from DB with retries for transient
+/// startup failures (e.g. Valkey still booting or loading AOF/RDB).
+pub async fn seed_from_db_with_retry(
+    max_attempts: usize,
+    retry_delay: Duration,
+) -> Result<(), String> {
+    if max_attempts == 0 {
+        return seed_from_db().await;
+    }
+
+    let mut last_err = String::new();
+
+    for attempt in 1..=max_attempts {
+        match seed_from_db().await {
+            Ok(()) => {
+                if attempt > 1 {
+                    tracing::info!(
+                        "kv: seeded enabled models after {attempt} attempts"
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                let transient = is_transient_startup_error(&e);
+                last_err = e;
+                if !transient || attempt == max_attempts {
+                    break;
+                }
+
+                tracing::info!(
+                    "kv: Redis not ready for seed yet (attempt {attempt}/{max_attempts}), retrying in {:?}",
+                    retry_delay
+                );
+                tokio::time::sleep(retry_delay).await;
+            }
+        }
+    }
+
+    Err(last_err)
+}
+
+fn is_transient_startup_error(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("connection refused")
+        || e.contains("busyloading")
+        || e.contains("loading the dataset in memory")
 }
