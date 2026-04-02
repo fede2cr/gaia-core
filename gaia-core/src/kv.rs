@@ -40,6 +40,7 @@ async fn conn() -> Result<redis::aio::MultiplexedConnection, String> {
 // ── Audio model management ───────────────────────────────────────────────
 
 const AUDIO_KEY: &str = "audio:enabled_models";
+const AUDIO_SEEDED_KEY: &str = "audio:enabled_models:seeded";
 
 /// Replace the set of enabled audio model slugs.
 pub async fn set_enabled_audio_models(slugs: &[String]) -> Result<(), String> {
@@ -47,6 +48,7 @@ pub async fn set_enabled_audio_models(slugs: &[String]) -> Result<(), String> {
     // Atomic: delete + re-add inside a pipeline.
     let mut pipe = redis::pipe();
     pipe.del(AUDIO_KEY);
+    pipe.set(AUDIO_SEEDED_KEY, 1);
     if !slugs.is_empty() {
         pipe.sadd(AUDIO_KEY, slugs.to_vec());
     }
@@ -60,7 +62,10 @@ pub async fn set_enabled_audio_models(slugs: &[String]) -> Result<(), String> {
 /// Add a single model slug to the enabled set.
 pub async fn enable_audio_model(slug: &str) -> Result<(), String> {
     let mut c = conn().await?;
-    c.sadd::<_, _, ()>(AUDIO_KEY, slug)
+    redis::pipe()
+        .set(AUDIO_SEEDED_KEY, 1)
+        .sadd(AUDIO_KEY, slug)
+        .query_async::<()>(&mut c)
         .await
         .map_err(|e| format!("Redis enable_audio_model: {e}"))?;
     tracing::info!("kv: enabled audio model '{slug}'");
@@ -70,7 +75,10 @@ pub async fn enable_audio_model(slug: &str) -> Result<(), String> {
 /// Remove a single model slug from the enabled set.
 pub async fn disable_audio_model(slug: &str) -> Result<(), String> {
     let mut c = conn().await?;
-    c.srem::<_, _, ()>(AUDIO_KEY, slug)
+    redis::pipe()
+        .set(AUDIO_SEEDED_KEY, 1)
+        .srem(AUDIO_KEY, slug)
+        .query_async::<()>(&mut c)
         .await
         .map_err(|e| format!("Redis disable_audio_model: {e}"))?;
     tracing::info!("kv: disabled audio model '{slug}'");

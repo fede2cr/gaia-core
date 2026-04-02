@@ -86,7 +86,7 @@ pub fn default_audio_models() -> Vec<AudioModel> {
             slug: "birdnet".into(),
             name: "BirdNET V2.4".into(),
             description: "Bird song classification -- ~6,500 species worldwide".into(),
-            enabled: false,
+            enabled: true,
             container_kind: "processing".into(),
         },
         AudioModel {
